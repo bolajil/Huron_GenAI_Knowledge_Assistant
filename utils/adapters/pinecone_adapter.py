@@ -1,9 +1,15 @@
 """
-Pinecone Vector Store Adapter - Simplified Working Version
+Pinecone Vector Store Adapter - Enterprise Multi-Tenant Version
+
+Supports:
+- Namespace-based department isolation
+- Tenant/department metadata tagging
+- Cross-namespace query prevention
 """
 
 import json
 import logging
+import re
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import asyncio
@@ -54,6 +60,10 @@ class PineconeAdapter(BaseVectorStore):
         
         self._client = None
         self._indexes = {}
+        
+        # Multi-tenant configuration
+        self._enforce_namespace = params.get('enforce_namespace', True)
+        self._default_tenant = params.get('default_tenant', 'huron')
         
         # Initialize client immediately
         try:
@@ -162,12 +172,66 @@ class PineconeAdapter(BaseVectorStore):
             logger.error(f"Failed to list Pinecone indexes: {e}")
             return []
     
+    def get_namespace(self, tenant_id: str, dept_id: str, doc_type: str = "general") -> str:
+        """Generate namespace name for department isolation.
+        
+        Format: vaultmind-{tenant}-{dept}-{type}
+        Example: vaultmind-huron-legal-general
+        
+        Pinecone namespace requirements:
+        - Max 45 characters
+        - Lowercase alphanumeric and hyphens only
+        """
+        name = f"vaultmind-{tenant_id}-{dept_id}-{doc_type}"
+        # Sanitize: lowercase, replace invalid chars with hyphen, truncate
+        name = re.sub(r"[^a-z0-9-]", "-", name.lower())[:45]
+        return name
+    
+    def validate_tenant_context(self, tenant_id: Optional[str], dept_id: Optional[str]) -> Tuple[bool, str]:
+        """Validate that required tenant context is present.
+        
+        Returns (is_valid, error_message)
+        """
+        if self._enforce_namespace:
+            if not tenant_id:
+                return False, "tenant_id is required for namespace isolation"
+            if not dept_id:
+                return False, "dept_id is required for namespace isolation"
+        return True, ""
+
     async def upsert_documents(self, 
                              collection_name: str,
                              documents: List[Dict[str, Any]],
-                             embeddings: Optional[List[List[float]]] = None) -> bool:
-        """Insert or update documents with vectors"""
+                             embeddings: Optional[List[List[float]]] = None,
+                             tenant_id: Optional[str] = None,
+                             dept_id: Optional[str] = None,
+                             namespace: Optional[str] = None) -> bool:
+        """Insert or update documents with vectors.
+        
+        Args:
+            collection_name: Pinecone index name
+            documents: List of documents with content, source, etc.
+            embeddings: Optional pre-computed embeddings
+            tenant_id: Tenant identifier (e.g., 'huron')
+            dept_id: Department identifier (e.g., 'legal', 'hr')
+            namespace: Optional explicit namespace (overrides tenant/dept)
+        """
         try:
+            # Validate tenant context if enforcement is enabled
+            if not namespace:
+                is_valid, error = self.validate_tenant_context(tenant_id, dept_id)
+                if not is_valid:
+                    if self._enforce_namespace:
+                        raise ValueError(error)
+                    else:
+                        # Use default namespace if not enforcing
+                        namespace = self.get_namespace(
+                            tenant_id or self._default_tenant,
+                            dept_id or "general"
+                        )
+                else:
+                    namespace = self.get_namespace(tenant_id, dept_id)
+            
             # Get or create index
             if collection_name not in self._indexes:
                 if not await self.create_collection(collection_name):
@@ -191,12 +255,19 @@ class PineconeAdapter(BaseVectorStore):
                 else:
                     continue
                 
-                # Prepare metadata
+                # Prepare metadata with tenant/department tagging
                 metadata = {
                     "content": doc.get('content', '')[:40000],
                     "source": doc.get('source', ''),
                     "source_type": doc.get('source_type', 'unknown'),
-                    "created_at": doc.get('created_at', datetime.now().isoformat())
+                    "created_at": doc.get('created_at', datetime.now().isoformat()),
+                    # Multi-tenant metadata
+                    "tenant_id": tenant_id or self._default_tenant,
+                    "dept_id": dept_id or "general",
+                    "namespace": namespace,
+                    # Additional document metadata
+                    "sensitivity_level": doc.get('sensitivity_level', 'internal'),
+                    "uploaded_by": doc.get('uploaded_by', 'system'),
                 }
                 
                 vectors_to_upsert.append({
@@ -205,15 +276,18 @@ class PineconeAdapter(BaseVectorStore):
                     "metadata": metadata
                 })
             
-            # Upsert in batches
+            # Upsert in batches WITH NAMESPACE
             batch_size = 100
             for i in range(0, len(vectors_to_upsert), batch_size):
                 batch = vectors_to_upsert[i:i + batch_size]
-                index.upsert(vectors=batch)
+                index.upsert(vectors=batch, namespace=namespace)
             
-            logger.info(f"Upserted {len(vectors_to_upsert)} documents to Pinecone index {collection_name}")
+            logger.info(f"Upserted {len(vectors_to_upsert)} documents to Pinecone index {collection_name} namespace={namespace}")
             return True
             
+        except ValueError as ve:
+            logger.error(f"Tenant validation failed: {ve}")
+            raise
         except Exception as e:
             logger.error(f"Failed to upsert documents to Pinecone index {collection_name}: {e}")
             return False
@@ -224,24 +298,67 @@ class PineconeAdapter(BaseVectorStore):
                     query_embedding: Optional[List[float]] = None,
                     filters: Optional[Dict[str, Any]] = None,
                     limit: int = 10,
+                    tenant_id: Optional[str] = None,
+                    dept_id: Optional[str] = None,
+                    namespace: Optional[str] = None,
+                    allowed_departments: Optional[List[str]] = None,
                     **kwargs) -> List[VectorSearchResult]:
-        """Search using Pinecone vector similarity"""
+        """Search using Pinecone vector similarity with namespace isolation.
+        
+        Args:
+            collection_name: Pinecone index name
+            query: Optional text query (not used directly, for logging)
+            query_embedding: Vector embedding of the query
+            filters: Additional Pinecone metadata filters
+            limit: Max results to return
+            tenant_id: Tenant identifier for namespace resolution
+            dept_id: Primary department for namespace search
+            namespace: Explicit namespace (overrides tenant/dept)
+            allowed_departments: List of departments user can access (for cross-dept search)
+        """
         try:
             if not query_embedding:
                 return []
+            
+            # Validate tenant context
+            if not namespace:
+                is_valid, error = self.validate_tenant_context(tenant_id, dept_id)
+                if not is_valid:
+                    if self._enforce_namespace:
+                        logger.warning(f"Search blocked: {error}")
+                        return []  # Return empty rather than raise in search
+                    else:
+                        namespace = None  # Search all namespaces (not recommended)
+                else:
+                    namespace = self.get_namespace(tenant_id, dept_id)
             
             if collection_name not in self._indexes:
                 self._indexes[collection_name] = self._client.Index(collection_name)
             
             index = self._indexes[collection_name]
             
-            # Perform search
-            search_response = index.query(
-                vector=query_embedding,
-                top_k=limit,
-                include_metadata=True,
-                include_values=False
-            )
+            # Build metadata filter
+            pinecone_filter = {}
+            if filters:
+                pinecone_filter.update(filters)
+            
+            # If searching with allowed_departments, add dept filter
+            if allowed_departments and len(allowed_departments) > 1:
+                pinecone_filter["dept_id"] = {"$in": allowed_departments}
+            
+            # Perform search WITH NAMESPACE
+            search_kwargs = {
+                "vector": query_embedding,
+                "top_k": limit,
+                "include_metadata": True,
+                "include_values": False,
+            }
+            if namespace:
+                search_kwargs["namespace"] = namespace
+            if pinecone_filter:
+                search_kwargs["filter"] = pinecone_filter
+            
+            search_response = index.query(**search_kwargs)
             
             # Process results
             results = []
@@ -256,20 +373,37 @@ class PineconeAdapter(BaseVectorStore):
                 )
                 results.append(result)
             
+            logger.debug(f"Search returned {len(results)} results from namespace={namespace}")
             return results
             
         except Exception as e:
             logger.error(f"Search failed in Pinecone index {collection_name}: {e}")
             return []
     
-    async def delete_documents(self, collection_name: str, document_ids: List[str]) -> bool:
-        """Delete specific documents from Pinecone index"""
+    async def delete_documents(self, 
+                               collection_name: str, 
+                               document_ids: List[str],
+                               tenant_id: Optional[str] = None,
+                               dept_id: Optional[str] = None,
+                               namespace: Optional[str] = None) -> bool:
+        """Delete specific documents from Pinecone index with namespace isolation."""
         try:
+            # Resolve namespace
+            if not namespace and tenant_id and dept_id:
+                namespace = self.get_namespace(tenant_id, dept_id)
+            
             if collection_name not in self._indexes:
                 self._indexes[collection_name] = self._client.Index(collection_name)
             
             index = self._indexes[collection_name]
-            index.delete(ids=document_ids)
+            
+            # Delete with namespace if provided
+            if namespace:
+                index.delete(ids=document_ids, namespace=namespace)
+            else:
+                index.delete(ids=document_ids)
+            
+            logger.info(f"Deleted {len(document_ids)} documents from namespace={namespace}")
             return True
         except Exception as e:
             logger.error(f"Failed to delete documents from Pinecone index {collection_name}: {e}")
