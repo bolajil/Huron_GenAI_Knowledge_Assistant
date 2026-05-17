@@ -1,0 +1,293 @@
+# VaultMind → Huron Enterprise Knowledge Platform
+# Department Namespace Registry
+# 
+# This is the single source of truth for:
+# - Department-to-namespace mapping
+# - Attention profiles (reranking weights)
+# - Access control settings
+# - Document type configurations
+
+# ===== GLOBAL SETTINGS =====
+global:
+  pinecone_index: "huron-enterprise-knowledge"
+  embedding_model: "text-embedding-3-large"
+  embedding_dimension: 1536
+  metric: "cosine"
+  default_top_k: 40  # Initial retrieval before reranking
+  reranked_top_k: 8  # Final results after reranking
+  
+# ===== DEPARTMENT DEFINITIONS =====
+departments:
+
+  # ----- LEGAL -----
+  legal:
+    namespace: "legal"
+    display_name: "Legal Department"
+    classification: "Restricted"
+    dedicated_nodes: true  # Pinecone Enterprise: dedicated read replicas
+    
+    document_types:
+      - contracts
+      - compliance
+      - regulatory_filings
+      - legal_opinions
+      - litigation
+      
+    attention_profile:
+      recency_weight: 0.90      # Heavily prefer recent regulatory updates
+      authority_boost: 1.40     # Prefer official/approved documents
+      confidence_threshold: 0.80
+      
+    web_crawler:
+      enabled: true
+      seed_urls:
+        - "https://www.sec.gov/rules"
+        - "https://www.federalregister.gov"
+      crawl_frequency_hours: 24
+      external_namespace: "legal_external"
+      ttl_days: 90
+
+  # ----- FINANCE -----
+  finance:
+    namespace: "finance"
+    display_name: "Finance Department"
+    classification: "Restricted"
+    dedicated_nodes: true
+    
+    document_types:
+      - budgets
+      - financial_reports
+      - forecasts
+      - audit_documents
+      - policies
+      
+    attention_profile:
+      recency_weight: 0.85
+      authority_boost: 1.30
+      confidence_threshold: 0.75
+      
+    web_crawler:
+      enabled: true
+      seed_urls:
+        - "https://www.sec.gov/edgar"
+        - "https://www.fasb.org"
+      crawl_frequency_hours: 24
+      external_namespace: "finance_external"
+      ttl_days: 90
+
+  # ----- CLINICAL -----
+  clinical:
+    namespace: "clinical"
+    display_name: "Clinical Operations"
+    classification: "HIPAA_PHI"
+    dedicated_nodes: true
+    requires_hipaa_baa: true  # BLOCKER: Must have BAA with Pinecone + OpenAI
+    
+    document_types:
+      - clinical_protocols
+      - fhir_data
+      - clinical_guidelines
+      - patient_procedures
+      - research_documents
+      
+    attention_profile:
+      recency_weight: 0.95      # Clinical protocols MUST be current
+      authority_boost: 1.50     # Only FDA/clinical-approved sources
+      confidence_threshold: 0.85
+      
+    # DLP: Extra scanning for PHI
+    dlp_config:
+      provider: "aws_macie"
+      scan_before_ingest: true
+      redact_phi: true
+      
+    web_crawler:
+      enabled: true
+      seed_urls:
+        - "https://www.fda.gov/drugs"
+        - "https://www.cms.gov"
+      crawl_frequency_hours: 12
+      external_namespace: "clinical_external"
+      ttl_days: 30  # Shorter TTL for clinical info
+
+  # ----- HUMAN RESOURCES -----
+  hr:
+    namespace: "hr"
+    display_name: "Human Resources"
+    classification: "Confidential"
+    dedicated_nodes: false  # Shared read pool
+    
+    document_types:
+      - policies
+      - benefits
+      - org_charts
+      - handbooks
+      - training_materials
+      
+    attention_profile:
+      recency_weight: 0.70
+      authority_boost: 1.00
+      confidence_threshold: 0.70
+      
+    web_crawler:
+      enabled: false
+
+  # ----- OPERATIONS -----
+  operations:
+    namespace: "operations"
+    display_name: "Operations"
+    classification: "Internal"
+    dedicated_nodes: false
+    
+    document_types:
+      - sops
+      - runbooks
+      - workflows
+      - project_docs
+      - procedures
+      
+    attention_profile:
+      recency_weight: 0.80
+      authority_boost: 1.10
+      confidence_threshold: 0.72
+      
+    web_crawler:
+      enabled: false
+
+  # ----- IT & ENGINEERING -----
+  it:
+    namespace: "it"
+    display_name: "IT & Engineering"
+    classification: "Confidential"
+    dedicated_nodes: false
+    
+    document_types:
+      - architecture_docs
+      - runbooks
+      - security_policies
+      - technical_specs
+      - api_documentation
+      
+    attention_profile:
+      recency_weight: 0.85
+      authority_boost: 1.20
+      confidence_threshold: 0.75
+      
+    web_crawler:
+      enabled: true
+      seed_urls:
+        - "https://docs.aws.amazon.com"
+        - "https://cloud.google.com/docs"
+        - "https://learn.microsoft.com"
+      crawl_frequency_hours: 168  # Weekly
+      external_namespace: "it_external"
+      ttl_days: 90
+
+  # ----- MARKETING -----
+  marketing:
+    namespace: "marketing"
+    display_name: "Marketing"
+    classification: "General"
+    dedicated_nodes: false
+    
+    document_types:
+      - campaigns
+      - brand_guidelines
+      - collateral
+      - market_research
+      - presentations
+      
+    attention_profile:
+      recency_weight: 0.65
+      authority_boost: 1.00
+      confidence_threshold: 0.65
+      
+    web_crawler:
+      enabled: false
+
+  # ----- EXTERNAL (Shared) -----
+  external:
+    namespace: "external"
+    display_name: "External Sources"
+    classification: "Public"
+    dedicated_nodes: false
+    
+    document_types:
+      - regulatory_feeds
+      - industry_news
+      - crawled_content
+      
+    attention_profile:
+      recency_weight: 0.95  # External info must be fresh
+      authority_boost: 0.80  # Lower authority than internal docs
+      confidence_threshold: 0.60
+      
+    # This namespace aggregates department-specific external crawls
+    aggregate_external_namespaces:
+      - "legal_external"
+      - "finance_external"
+      - "clinical_external"
+      - "it_external"
+
+
+# ===== ENCRYPTION CONFIGURATION =====
+encryption:
+  provider: "aws_kms"
+  key_per_namespace: true
+  key_rotation_days: 365
+  
+  # Per-namespace KMS key ARNs (to be filled after provisioning)
+  keys:
+    legal: ""  # arn:aws:kms:us-east-1:xxx:key/xxx
+    finance: ""
+    clinical: ""
+    hr: ""
+    operations: ""
+    it: ""
+    marketing: ""
+    external: ""
+
+
+# ===== AUDIT CONFIGURATION =====
+audit:
+  enabled: true
+  log_destination: "s3"
+  s3_bucket: "huron-vaultmind-audit-logs"
+  s3_prefix: "audit/"
+  worm_enabled: true  # S3 Object Lock for compliance
+  retention_years: 7
+  
+  # Events to log
+  log_events:
+    - query
+    - ingest
+    - delete
+    - auth_success
+    - auth_failure
+    - namespace_access_denied
+
+
+# ===== SSO GROUP MAPPINGS =====
+sso_mappings:
+  okta:
+    # Okta group name -> department
+    "Legal Team": "legal"
+    "Finance Team": "finance"
+    "Clinical Ops": "clinical"
+    "Human Resources": "hr"
+    "Operations": "operations"
+    "IT Engineering": "it"
+    "Marketing": "marketing"
+    
+  azure_ad:
+    # Azure AD group ID -> department
+    "00000000-0000-0000-0000-000000000001": "legal"
+    "00000000-0000-0000-0000-000000000002": "finance"
+    # ... etc
+
+
+# ===== RATE LIMITS =====
+rate_limits:
+  per_department_rps: 100
+  per_user_rps: 10
+  burst_multiplier: 2

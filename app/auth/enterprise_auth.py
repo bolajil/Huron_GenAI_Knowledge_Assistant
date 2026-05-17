@@ -453,11 +453,7 @@ class EnterpriseAuth:
         st.session_state.session_timeout = datetime.now() + timedelta(minutes=self.security_config.session_timeout_minutes)
     
     def _log_security_event(self, event_type: str, username: str, details: str = None):
-<<<<<<< HEAD
         """Log security events for audit trail (Windows-safe encoding)."""
-=======
-        """Log security events for audit trail"""
->>>>>>> clean-master
         log_entry = {
             'timestamp': datetime.now().isoformat(),
             'username': username,
@@ -466,7 +462,6 @@ class EnterpriseAuth:
             'user_agent': self._get_user_agent(),
             'details': details or {}
         }
-<<<<<<< HEAD
         try:
             import json as _json
             safe_msg = _json.dumps(log_entry, ensure_ascii=True)
@@ -474,11 +469,6 @@ class EnterpriseAuth:
         except Exception:
             # Do not let logging failures break auth flow
             pass
-=======
-        
-        # In production, this would write to a secure audit log
-        print(f"[AUDIT] {log_entry}")
->>>>>>> clean-master
     
     def _requires_mfa(self, username: str) -> bool:
         """Check if user requires MFA"""
