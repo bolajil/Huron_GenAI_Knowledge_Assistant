@@ -22,6 +22,14 @@ class UserRole(Enum):
     USER = "user" 
     VIEWER = "viewer"
 
+class ClearanceLevel(Enum):
+    """Document sensitivity clearance levels"""
+    PUBLIC = "public"
+    INTERNAL = "internal"
+    CONFIDENTIAL = "confidential"
+    RESTRICTED = "restricted"
+    HIPAA_PHI = "hipaa_phi"
+
 @dataclass
 class User:
     username: str
@@ -30,6 +38,11 @@ class User:
     created_at: datetime
     last_login: Optional[datetime] = None
     is_active: bool = True
+    # Multi-tenant fields
+    tenant_id: str = "huron"  # Default tenant
+    dept_id: Optional[str] = None  # Primary department
+    dept_ids: Optional[List[str]] = None  # All departments user can access
+    clearance_level: ClearanceLevel = ClearanceLevel.INTERNAL
 
 class AuthenticationManager:
     """Production-ready authentication system for VaultMind"""
@@ -58,9 +71,26 @@ class AuthenticationManager:
             last_login TIMESTAMP,
             is_active BOOLEAN DEFAULT 1,
             failed_login_attempts INTEGER DEFAULT 0,
-            locked_until TIMESTAMP
+            locked_until TIMESTAMP,
+            tenant_id TEXT DEFAULT 'huron',
+            dept_id TEXT,
+            clearance_level TEXT DEFAULT 'internal'
         )
         """)
+        
+        # Add new columns if they don't exist (for migration)
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN tenant_id TEXT DEFAULT 'huron'")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN dept_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN clearance_level TEXT DEFAULT 'internal'")
+        except sqlite3.OperationalError:
+            pass
         
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_sessions (
@@ -186,14 +216,29 @@ class AuthenticationManager:
             conn.close()
             return None
     
-    def generate_token(self, user: User) -> str:
-        """Generate JWT token for authenticated user"""
+    def generate_token(self, user: User, dept_id: Optional[str] = None) -> str:
+        """Generate JWT token for authenticated user.
+        
+        Token includes multi-tenant claims:
+        - tenant_id: The tenant organization
+        - dept_id: Primary department for this session
+        - dept_ids: All departments user can access
+        - clearance_level: Document sensitivity clearance
+        """
+        # Use provided dept_id or fall back to user's primary dept
+        session_dept = dept_id or user.dept_id
+        
         payload = {
             'username': user.username,
             'email': user.email,
             'role': user.role.value,
             'exp': datetime.utcnow() + timedelta(hours=self.token_expiry_hours),
-            'iat': datetime.utcnow()
+            'iat': datetime.utcnow(),
+            # Multi-tenant claims (Phase 1 requirement)
+            'tenant_id': user.tenant_id,
+            'dept_id': session_dept,
+            'dept_ids': user.dept_ids or ([session_dept] if session_dept else []),
+            'clearance_level': user.clearance_level.value if hasattr(user.clearance_level, 'value') else str(user.clearance_level),
         }
         
         return jwt.encode(payload, self.secret_key, algorithm='HS256')
@@ -225,7 +270,8 @@ class AuthenticationManager:
         cursor = conn.cursor()
         
         cursor.execute("""
-        SELECT username, email, role, created_at, last_login, is_active
+        SELECT username, email, role, created_at, last_login, is_active,
+               tenant_id, dept_id, clearance_level
         FROM users WHERE username = ? AND is_active = 1
         """, (username,))
         
@@ -233,13 +279,24 @@ class AuthenticationManager:
         conn.close()
         
         if user_data:
+            # Handle clearance level (may be None for legacy users)
+            clearance = ClearanceLevel.INTERNAL
+            if user_data[8]:
+                try:
+                    clearance = ClearanceLevel(user_data[8])
+                except ValueError:
+                    clearance = ClearanceLevel.INTERNAL
+            
             return User(
                 username=user_data[0],
                 email=user_data[1],
                 role=UserRole(user_data[2]),
                 created_at=datetime.fromisoformat(user_data[3]),
                 last_login=datetime.fromisoformat(user_data[4]) if user_data[4] else None,
-                is_active=bool(user_data[5])
+                is_active=bool(user_data[5]),
+                tenant_id=user_data[6] or 'huron',
+                dept_id=user_data[7],
+                clearance_level=clearance
             )
         return None
     
