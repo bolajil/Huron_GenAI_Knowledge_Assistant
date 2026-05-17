@@ -272,8 +272,84 @@
 
 ---
 
-## PHASE 6: Hardening, Security & GA
-**Duration**: Weeks 20-24  
+## PHASE 6: React Frontend Migration
+**Duration**: Weeks 18-22  
+**Reason**: Streamlit is slow for production; React provides better UX  
+
+### 6.1 Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    React Frontend                        │
+│  (Next.js 14 + TypeScript + Tailwind + shadcn/ui)       │
+├─────────────────────────────────────────────────────────┤
+│                    FastAPI Backend                       │
+│  /api/v1/auth  /api/v1/ingest  /api/v1/query  /api/v1/admin │
+├─────────────────────────────────────────────────────────┤
+│     Pinecone    │    PostgreSQL    │    Redis Cache     │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 6.2 React App Structure
+
+```
+frontend/
+├── src/
+│   ├── app/                    # Next.js 14 app router
+│   │   ├── (auth)/             # Login, register
+│   │   ├── (dashboard)/        # Main dashboard
+│   │   │   ├── chat/           # Chat assistant
+│   │   │   ├── query/          # Query assistant
+│   │   │   ├── ingest/         # Document ingestion
+│   │   │   ├── admin/          # Admin panel
+│   │   │   └── settings/       # User settings
+│   │   └── api/                # API routes (proxy to FastAPI)
+│   ├── components/
+│   │   ├── ui/                 # shadcn/ui components
+│   │   ├── chat/               # Chat-specific components
+│   │   ├── documents/          # Document list, viewer
+│   │   └── admin/              # Admin components
+│   ├── lib/
+│   │   ├── api.ts              # API client
+│   │   ├── auth.ts             # Auth utilities
+│   │   └── tenant-context.ts   # Multi-tenant context
+│   └── hooks/
+│       ├── useChat.ts          # Chat state management
+│       ├── useDocuments.ts     # Document CRUD
+│       └── useTenant.ts        # Tenant context hook
+├── package.json
+└── tailwind.config.ts
+```
+
+### 6.3 Key React Features
+
+| Feature | Technology | Benefit |
+|---------|------------|---------|
+| Real-time chat | React Query + WebSocket | No page refreshes |
+| Document upload | React Dropzone | Drag-and-drop UX |
+| State management | Zustand or Jotai | Lightweight, fast |
+| Auth | NextAuth.js | SSO, OAuth, JWT |
+| UI Components | shadcn/ui | Enterprise-grade look |
+| Streaming | Server-Sent Events | Token streaming for LLM |
+
+### 6.4 Migration Strategy
+
+| Week | Task |
+|------|------|
+| 18 | Set up Next.js project, auth flow |
+| 19 | Build chat interface with streaming |
+| 20 | Document ingestion UI, query interface |
+| 21 | Admin panel, department selector |
+| 22 | Testing, deployment, Streamlit deprecation |
+
+### 💡 Suggestion
+
+Keep Streamlit for **internal admin/debugging** while React serves production users.
+
+---
+
+## PHASE 7: Hardening, Security & GA
+**Duration**: Weeks 22-26  
 
 ### 6.1 Security & Compliance
 
