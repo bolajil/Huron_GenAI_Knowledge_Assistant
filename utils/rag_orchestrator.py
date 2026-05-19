@@ -70,10 +70,13 @@ except ImportError:
     RERANKER_AVAILABLE = False
 
 try:
-    from utils.adapters.pinecone_adapter import PineconeAdapter
-    PINECONE_AVAILABLE = True
+    from utils.adapters.pinecone_adapter import PineconeAdapter, PINECONE_AVAILABLE as PC_AVAIL
+    from utils.multi_vector_storage_interface import VectorStoreConfig
+    PINECONE_AVAILABLE = PC_AVAIL
 except ImportError:
     PINECONE_AVAILABLE = False
+    PineconeAdapter = None
+    VectorStoreConfig = None
 
 
 class QueryIntent(Enum):
@@ -236,11 +239,23 @@ class RAGOrchestrator:
             except Exception as e:
                 logger.warning(f"Failed to init reranker: {e}")
         
-        # Pinecone adapter
+        # Pinecone adapter with proper config
         self.pinecone = None
-        if PINECONE_AVAILABLE:
+        if PINECONE_AVAILABLE and PineconeAdapter and VectorStoreConfig:
             try:
-                self.pinecone = PineconeAdapter()
+                config = VectorStoreConfig(
+                    name="pinecone-rag",
+                    store_type="pinecone",
+                    connection_params={
+                        "api_key": os.getenv("PINECONE_API_KEY"),
+                        "vector_dimension": 384 if self.embedding_model == "all-MiniLM-L6-v2" else 1536,
+                        "metric": "cosine",
+                        "enforce_namespace": True,
+                        "default_tenant": "huron",
+                    }
+                )
+                self.pinecone = PineconeAdapter(config)
+                logger.info(f"Pinecone adapter initialized for RAG: index={self.pinecone_index}")
             except Exception as e:
                 logger.warning(f"Failed to init Pinecone: {e}")
         
@@ -342,13 +357,18 @@ class RAGOrchestrator:
         return state
     
     def _node_retrieve(self, state: GraphState) -> GraphState:
-        """Node 3: Retrieve chunks from vector store"""
+        """Node 3: Retrieve chunks from Pinecone vector store with namespace isolation"""
         query = state["query"]
         namespace = state.get("namespace")
         
         if not self.pinecone or not self.embedder:
             state["errors"] = state.get("errors", []) + ["Vector store not available"]
             return state
+        
+        if not namespace:
+            state["warnings"] = state.get("warnings", []) + [
+                "No namespace - retrieval may cross departments"
+            ]
         
         try:
             # Generate query embedding
@@ -363,37 +383,72 @@ class RAGOrchestrator:
                 "multi_query": 20,
             }.get(strategy, 10)
             
-            # Search with namespace isolation
-            results = self.pinecone.search(
-                collection_name=self.pinecone_index,
-                query_embedding=query_embedding,
-                top_k=top_k,
-                tenant_id=state.get("tenant_id", "huron"),
-                dept_id=state.get("dept_id"),
-                namespace=namespace,
-            )
+            # Search with namespace isolation (async call via run)
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Already in async context
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        self.pinecone.search(
+                            collection_name=self.pinecone_index,
+                            query_embedding=query_embedding,
+                            limit=top_k,
+                            tenant_id=state.get("tenant_id", "huron"),
+                            dept_id=state.get("dept_id"),
+                            namespace=namespace,
+                        )
+                    )
+                    results = future.result()
+            else:
+                results = asyncio.run(
+                    self.pinecone.search(
+                        collection_name=self.pinecone_index,
+                        query_embedding=query_embedding,
+                        limit=top_k,
+                        tenant_id=state.get("tenant_id", "huron"),
+                        dept_id=state.get("dept_id"),
+                        namespace=namespace,
+                    )
+                )
             
             # Convert results to chunks
             chunks = []
             for r in results:
+                # Handle both object and dict results
+                if hasattr(r, 'metadata'):
+                    metadata = r.metadata
+                    score = r.score
+                    doc_id = r.id
+                elif isinstance(r, dict):
+                    metadata = r.get('metadata', {})
+                    score = r.get('score', 0)
+                    doc_id = r.get('id', '')
+                else:
+                    continue
+                    
                 chunks.append({
-                    "id": r.id,
-                    "content": r.metadata.get("content", ""),
-                    "score": r.score,
-                    "source": r.metadata.get("source", ""),
-                    "chunk_type": r.metadata.get("chunk_type", "unknown"),
-                    "parent_id": r.metadata.get("parent_id"),
-                    "metadata": r.metadata,
+                    "id": doc_id,
+                    "content": metadata.get("content", ""),
+                    "score": score,
+                    "source": metadata.get("source", ""),
+                    "chunk_type": metadata.get("chunk_type", "unknown"),
+                    "parent_id": metadata.get("parent_id"),
+                    "dept_id": metadata.get("dept_id"),
+                    "namespace": metadata.get("namespace"),
+                    "metadata": metadata,
                 })
             
             state["retrieved_chunks"] = chunks
+            logger.info(f"Retrieved {len(chunks)} chunks from namespace={namespace}")
             
-            # Fetch parent chunks if available
+            # Fetch parent chunks for context expansion (hierarchical chunking)
             parent_ids = set(c.get("parent_id") for c in chunks if c.get("parent_id"))
-            if parent_ids:
-                # Fetch parent chunks for context expansion
-                # This would query Pinecone for parent_id matches
-                state["parent_chunks"] = []  # Placeholder
+            if parent_ids and len(parent_ids) < 10:
+                # Parent chunk retrieval would happen here
+                state["parent_chunks"] = []
             
         except Exception as e:
             logger.error(f"Retrieval failed: {e}")
