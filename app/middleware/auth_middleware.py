@@ -1,17 +1,34 @@
 """
-VaultMind GenAI Knowledge Assistant - Authentication Middleware
+Huron GenAI Knowledge Assistant - Authentication Middleware
 Production-ready middleware for FastAPI request authentication and authorization
-Refactored to remove Streamlit dependencies - uses JWT Bearer tokens
+
+Features:
+- JWT Bearer token authentication
+- Multi-tenant context injection via TenantContext
+- Role-based access control (RBAC)
+- Department-scoped namespace isolation
+- Audit logging integration
+
+Author: Production Scalability Team
+Date: May 2026
 """
 
 import logging
 import time
+import uuid
 from functools import wraps
-from typing import Callable, Any, Dict, Optional
-from fastapi import Depends, HTTPException, status
+from typing import Callable, Any, Dict, Optional, List
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 
 from ..auth.authentication import auth_manager, UserRole
+from utils.tenant_context import (
+    TenantContext, 
+    set_current_context, 
+    get_current_context,
+    clear_context,
+    ClearanceLevel
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +37,45 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=F
 
 
 class UserContext:
-    """User context extracted from JWT token"""
-    def __init__(self, user_data: Dict[str, Any]):
+    """
+    User context extracted from JWT token with multi-tenant support.
+    
+    Now integrates with TenantContext for namespace isolation.
+    """
+    def __init__(self, user_data: Dict[str, Any], request: Optional[Request] = None):
         self.username = user_data.get('username', '')
         self.email = user_data.get('email', '')
         self.role = user_data.get('role', 'viewer')
-        self.department = user_data.get('department', '')
+        self.department = user_data.get('dept_id', '')  # Primary department
+        self.departments = user_data.get('dept_ids', [])  # All accessible departments
+        self.tenant_id = user_data.get('tenant_id', 'huron')
+        self.clearance_level = user_data.get('clearance_level', 'internal')
         self.permissions = user_data.get('permissions', [])
         self.authenticated = True
+        
+        # Create TenantContext from JWT claims
+        self._tenant_context = TenantContext.from_jwt_claims(user_data)
+        
+        # Add request metadata
+        if request:
+            self._tenant_context.request_id = request.headers.get('X-Request-ID', str(uuid.uuid4()))
+            self._tenant_context.ip_address = request.client.host if request.client else None
+        
+        # Set as current context for this request
+        set_current_context(self._tenant_context)
+    
+    @property
+    def tenant_context(self) -> TenantContext:
+        """Get the TenantContext for this user"""
+        return self._tenant_context
+    
+    def get_namespace(self, doc_type: str = "general") -> str:
+        """Get the Pinecone namespace for this user's primary department"""
+        return self._tenant_context.get_namespace(doc_type)
+    
+    def can_access_department(self, dept_id: str) -> bool:
+        """Check if user can access a specific department"""
+        return self._tenant_context.can_access_department(dept_id)
     
     def has_role(self, required_role: str) -> bool:
         """Check if user has required role or higher"""
@@ -35,12 +83,25 @@ class UserContext:
         user_level = role_hierarchy.get(self.role, 0)
         required_level = role_hierarchy.get(required_role, 0)
         return user_level >= required_level
+    
+    def has_clearance(self, required_level: str) -> bool:
+        """Check if user has sufficient clearance level"""
+        try:
+            required = ClearanceLevel.from_string(required_level)
+            return self._tenant_context.can_access_clearance(required)
+        except:
+            return False
 
 
-async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> Optional[UserContext]:
+async def get_current_user(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme)
+) -> Optional[UserContext]:
     """
     FastAPI dependency to get current authenticated user from JWT token.
     Returns None if not authenticated (for optional auth endpoints).
+    
+    Automatically sets TenantContext for namespace isolation.
     """
     if not token:
         return None
@@ -49,16 +110,21 @@ async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> Opt
         payload = auth_manager.verify_token(token)
         if not payload:
             return None
-        return UserContext(payload)
+        return UserContext(payload, request)
     except Exception as e:
         logger.error(f"Token verification failed: {e}")
         return None
 
 
-async def require_auth(token: str = Depends(oauth2_scheme)) -> UserContext:
+async def require_auth(
+    request: Request,
+    token: str = Depends(oauth2_scheme)
+) -> UserContext:
     """
     FastAPI dependency to require authentication.
     Raises HTTPException if not authenticated.
+    
+    Sets TenantContext for namespace isolation on successful auth.
     """
     if not token:
         raise HTTPException(
@@ -75,7 +141,13 @@ async def require_auth(token: str = Depends(oauth2_scheme)) -> UserContext:
                 detail="Invalid or expired token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        return UserContext(payload)
+        
+        # Validate dept_id is present (required for namespace isolation)
+        if not payload.get('dept_id'):
+            logger.warning(f"JWT missing dept_id for user {payload.get('username')}")
+            # Don't fail - allow access but log warning
+        
+        return UserContext(payload, request)
     except HTTPException:
         raise
     except Exception as e:
@@ -167,5 +239,79 @@ class AuthMiddleware:
             }
 
 
+def require_department(dept_id: str):
+    """
+    FastAPI dependency factory for department-scoped access control.
+    
+    Usage: @app.get("/legal/docs", dependencies=[Depends(require_department("legal"))])
+    
+    Raises 403 if user doesn't have access to the specified department.
+    """
+    async def department_checker(user: UserContext = Depends(require_auth)) -> UserContext:
+        if not user.can_access_department(dept_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access to department '{dept_id}' denied"
+            )
+        return user
+    return department_checker
+
+
+def require_clearance(level: str):
+    """
+    FastAPI dependency factory for clearance-level access control.
+    
+    Usage: @app.get("/restricted", dependencies=[Depends(require_clearance("confidential"))])
+    
+    Raises 403 if user doesn't have sufficient clearance.
+    """
+    async def clearance_checker(user: UserContext = Depends(require_auth)) -> UserContext:
+        if not user.has_clearance(level):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Clearance level '{level}' required"
+            )
+        return user
+    return clearance_checker
+
+
+def get_tenant_context(user: UserContext = Depends(require_auth)) -> TenantContext:
+    """
+    FastAPI dependency to get the current TenantContext.
+    
+    Usage:
+        @app.get("/query")
+        async def query(ctx: TenantContext = Depends(get_tenant_context)):
+            namespace = ctx.get_namespace()
+            ...
+    """
+    return user.tenant_context
+
+
+async def cleanup_context():
+    """
+    Cleanup TenantContext after request.
+    Use as a background task or in middleware.
+    """
+    clear_context()
+
+
 # Global middleware instance
 auth_middleware = AuthMiddleware()
+
+
+# Export for easy imports
+__all__ = [
+    'UserContext',
+    'get_current_user',
+    'require_auth',
+    'require_role',
+    'require_admin',
+    'require_user',
+    'require_department',
+    'require_clearance',
+    'get_tenant_context',
+    'cleanup_context',
+    'auth_middleware',
+    'oauth2_scheme',
+]
