@@ -67,6 +67,16 @@ except ImportError:
     DLP_AVAILABLE = False
     logger.info("DLP scanner not available")
 
+# Import Pinecone adapter for vector store upsert
+try:
+    from utils.adapters.pinecone_adapter import PineconeAdapter, PINECONE_AVAILABLE
+    from utils.multi_vector_storage_interface import VectorStoreConfig
+except ImportError:
+    PINECONE_AVAILABLE = False
+    PineconeAdapter = None
+    VectorStoreConfig = None
+    logger.info("Pinecone adapter not available")
+
 
 @dataclass
 class IngestionResult:
@@ -124,6 +134,8 @@ class IngestionService:
         enable_quality_gate: bool = True,
         enable_classification: bool = True,
         enable_dlp_scan: bool = True,
+        enable_pinecone: bool = True,
+        pinecone_index: str = "huron-enterprise-knowledge",
     ):
         """
         Initialize ingestion service.
@@ -135,10 +147,14 @@ class IngestionService:
             enable_quality_gate: Whether to filter low-quality chunks
             enable_classification: Whether to auto-classify documents
             enable_dlp_scan: Whether to scan for sensitive data (DLP)
+            enable_pinecone: Whether to upsert to Pinecone
+            pinecone_index: Pinecone index name
         """
         self.enable_quality_gate = enable_quality_gate
         self.enable_classification = enable_classification and CLASSIFIER_AVAILABLE
         self.enable_dlp_scan = enable_dlp_scan and DLP_AVAILABLE
+        self.enable_pinecone = enable_pinecone and PINECONE_AVAILABLE
+        self.pinecone_index = pinecone_index
         
         # Initialize chunker
         self.chunker = HierarchicalChunker(
@@ -174,6 +190,27 @@ class IngestionService:
             except Exception as e:
                 logger.warning(f"Failed to initialize DLP scanner: {e}")
                 self.enable_dlp_scan = False
+        
+        # Initialize Pinecone adapter for vector upsert
+        self.pinecone_adapter = None
+        if self.enable_pinecone and PineconeAdapter and VectorStoreConfig:
+            try:
+                config = VectorStoreConfig(
+                    name="pinecone-production",
+                    store_type="pinecone",
+                    connection_params={
+                        "api_key": os.getenv("PINECONE_API_KEY"),
+                        "vector_dimension": 384 if embedding_model == "all-MiniLM-L6-v2" else 1536,
+                        "metric": "cosine",
+                        "enforce_namespace": True,
+                        "default_tenant": "huron",
+                    }
+                )
+                self.pinecone_adapter = PineconeAdapter(config)
+                logger.info(f"Pinecone adapter initialized for index: {pinecone_index}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Pinecone adapter: {e}")
+                self.enable_pinecone = False
     
     async def ingest_document(
         self,
@@ -315,9 +352,55 @@ class IngestionService:
             all_chunks = parent_chunks + child_chunks
             embeddings = self._generate_embeddings([c.content for c in all_chunks])
             
-            # Step 6: Prepare for vector store upsert
-            # (Actual upsert would happen here via Pinecone adapter)
-            # For now, we return the prepared chunks
+            # Step 6: Upsert to Pinecone vector store (THE CRITICAL WIRING)
+            upsert_success = False
+            if self.enable_pinecone and self.pinecone_adapter and namespace:
+                try:
+                    # Convert chunks to document format for Pinecone
+                    documents = []
+                    for chunk in all_chunks:
+                        doc = {
+                            "id": chunk.chunk_id,
+                            "content": chunk.content,
+                            "source": source,
+                            "source_type": "document",
+                            "document_type": document_type,
+                            "sensitivity_level": sensitivity_level,
+                            "uploaded_by": getattr(tenant_context, "username", "system") if tenant_context else "system",
+                            # Hierarchical chunking metadata
+                            "chunk_type": chunk.chunk_type,  # "parent" or "child"
+                            "parent_id": chunk.parent_id,
+                            "chunk_index": chunk.chunk_index,
+                            # Additional metadata
+                            **metadata
+                        }
+                        documents.append(doc)
+                    
+                    # Execute upsert to Pinecone with namespace isolation
+                    upsert_success = await self.pinecone_adapter.upsert_documents(
+                        collection_name=self.pinecone_index,
+                        documents=documents,
+                        embeddings=embeddings,
+                        tenant_id=tenant_id,
+                        dept_id=dept_id,
+                        namespace=namespace,
+                    )
+                    
+                    if upsert_success:
+                        logger.info(
+                            f"Pinecone upsert SUCCESS: {len(documents)} vectors "
+                            f"to index={self.pinecone_index}, namespace={namespace}"
+                        )
+                    else:
+                        warnings.append("Pinecone upsert returned False")
+                        
+                except Exception as e:
+                    logger.error(f"Pinecone upsert failed: {e}")
+                    warnings.append(f"Pinecone upsert error: {str(e)}")
+            elif self.enable_pinecone and not namespace:
+                warnings.append("Pinecone upsert skipped: no namespace (dept_id required)")
+            elif not self.enable_pinecone:
+                warnings.append("Pinecone upsert skipped: adapter not enabled")
             
             processing_time = int((time.time() - start_time) * 1000)
             
@@ -336,14 +419,16 @@ class IngestionService:
                 warnings=warnings,
             )
             
-            # Attach chunks and embeddings for caller to use
+            # Attach chunks and embeddings for caller to use (or fallback stores)
             result._parent_chunks = parent_chunks
             result._child_chunks = child_chunks
             result._embeddings = embeddings
+            result._pinecone_upsert_success = upsert_success
             
             logger.info(
                 f"Ingested {source}: {len(parent_chunks)} parents, "
-                f"{len(child_chunks)} children, {rejected_count} rejected "
+                f"{len(child_chunks)} children, {rejected_count} rejected, "
+                f"pinecone={'OK' if upsert_success else 'SKIP'} "
                 f"({processing_time}ms)"
             )
             
