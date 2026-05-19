@@ -2,7 +2,7 @@
 Real MFA providers for VaultMind enterprise authentication
 """
 
-import streamlit as st
+import logging
 import secrets
 import time
 from typing import Optional, Dict, Any
@@ -10,6 +10,11 @@ from datetime import datetime, timedelta
 import hashlib
 import hmac
 import base64
+
+logger = logging.getLogger(__name__)
+
+# In-memory storage for MFA codes (in production, use Redis or database)
+_mfa_code_storage: Dict[str, Dict[str, Any]] = {}
 
 class MFAProviders:
     """Real MFA provider implementations"""
@@ -53,7 +58,7 @@ class MFAProviders:
         except ImportError:
             return ""
         except Exception as e:
-            st.error(f"Error generating QR code: {str(e)}")
+            logger.error(f"Error generating QR code: {str(e)}")
             return ""
     
     def verify_totp_code(self, secret: str, code: str, window: int = 1) -> bool:
@@ -167,7 +172,7 @@ class MFAProviders:
             return True
             
         except Exception as e:
-            st.error(f"Failed to send email: {str(e)}")
+            logger.error(f"Failed to send email: {str(e)}")
             return False
     
     def send_sms_code(self, phone: str, code: str) -> bool:
@@ -182,7 +187,7 @@ class MFAProviders:
         elif provider == "aws_sns":
             return self._send_aws_sns_sms(phone, code)
         else:
-            st.error("SMS provider not configured")
+            logger.error("SMS provider not configured")
             return False
     
     def _send_twilio_sms(self, phone: str, code: str) -> bool:
@@ -213,10 +218,10 @@ class MFAProviders:
             return message.sid is not None
             
         except ImportError:
-            st.error("Twilio library not installed. Run: pip install twilio")
+            logger.error("Twilio library not installed. Run: pip install twilio")
             return False
         except Exception as e:
-            st.error(f"Failed to send SMS via Twilio: {str(e)}")
+            logger.error(f"Failed to send SMS via Twilio: {str(e)}")
             return False
     
     def _send_aws_sns_sms(self, phone: str, code: str) -> bool:
@@ -251,10 +256,10 @@ class MFAProviders:
             return response['ResponseMetadata']['HTTPStatusCode'] == 200
             
         except ImportError:
-            st.error("boto3 library not installed. Run: pip install boto3")
+            logger.error("boto3 library not installed. Run: pip install boto3")
             return False
         except Exception as e:
-            st.error(f"Failed to send SMS via AWS SNS: {str(e)}")
+            logger.error(f"Failed to send SMS via AWS SNS: {str(e)}")
             return False
     
     def generate_verification_code(self) -> str:
@@ -265,7 +270,7 @@ class MFAProviders:
         """Store verification code with expiration"""
         expiry = datetime.now() + timedelta(minutes=5)
         
-        st.session_state[f"mfa_code_{username}_{method}"] = {
+        _mfa_code_storage[f"mfa_code_{username}_{method}"] = {
             "code": code,
             "expires_at": expiry.isoformat(),
             "attempts": 0
@@ -274,7 +279,7 @@ class MFAProviders:
     def verify_stored_code(self, username: str, code: str, method: str) -> bool:
         """Verify stored verification code"""
         key = f"mfa_code_{username}_{method}"
-        stored_data = st.session_state.get(key)
+        stored_data = _mfa_code_storage.get(key)
         
         if not stored_data:
             return False
@@ -283,8 +288,8 @@ class MFAProviders:
         expires_at = datetime.fromisoformat(stored_data["expires_at"])
         if datetime.now() > expires_at:
             # Clean up expired code
-            if key in st.session_state:
-                del st.session_state[key]
+            if key in _mfa_code_storage:
+                del _mfa_code_storage[key]
             return False
         
         # Check attempts
@@ -294,12 +299,12 @@ class MFAProviders:
         # Verify code
         if stored_data["code"] == code:
             # Clean up used code
-            if key in st.session_state:
-                del st.session_state[key]
+            if key in _mfa_code_storage:
+                del _mfa_code_storage[key]
             return True
         else:
             # Increment attempts
-            st.session_state[key]["attempts"] += 1
+            _mfa_code_storage[key]["attempts"] += 1
             return False
     
     def cleanup_expired_codes(self):
@@ -307,16 +312,16 @@ class MFAProviders:
         current_time = datetime.now()
         keys_to_delete = []
         
-        for key in st.session_state.keys():
+        for key in list(_mfa_code_storage.keys()):
             if key.startswith("mfa_code_"):
-                stored_data = st.session_state[key]
+                stored_data = _mfa_code_storage[key]
                 if isinstance(stored_data, dict) and "expires_at" in stored_data:
                     expires_at = datetime.fromisoformat(stored_data["expires_at"])
                     if current_time > expires_at:
                         keys_to_delete.append(key)
         
         for key in keys_to_delete:
-            del st.session_state[key]
+            del _mfa_code_storage[key]
 
 # Global MFA providers instance
 mfa_providers = None

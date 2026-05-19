@@ -2,9 +2,11 @@
 Real Active Directory integration for VaultMind enterprise authentication
 """
 
-import streamlit as st
+import logging
 from typing import Optional, Dict, Any
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class ActiveDirectoryConnector:
     """Real Active Directory authentication connector"""
@@ -68,13 +70,13 @@ class ActiveDirectoryConnector:
             return user_info
             
         except ImportError:
-            st.error("ldap3 library not installed. Run: pip install ldap3")
+            logger.error("ldap3 library not installed. Run: pip install ldap3")
             return None
         except LDAPException as e:
-            st.error(f"LDAP authentication failed: {str(e)}")
+            logger.error(f"LDAP authentication failed: {str(e)}")
             return None
         except Exception as e:
-            st.error(f"AD authentication error: {str(e)}")
+            logger.error(f"AD authentication error: {str(e)}")
             return None
     
     def get_user_groups(self, username: str) -> list:
@@ -125,7 +127,7 @@ class ActiveDirectoryConnector:
             return []
             
         except Exception as e:
-            st.error(f"Error retrieving user groups: {str(e)}")
+            logger.error(f"Error retrieving user groups: {str(e)}")
             return []
     
     def map_groups_to_role(self, groups: list) -> str:

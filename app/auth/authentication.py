@@ -3,7 +3,6 @@ VaultMind GenAI Knowledge Assistant - Authentication System
 Production-ready user authentication with role-based access control
 """
 
-import streamlit as st
 import bcrypt
 import jwt
 from datetime import datetime, timedelta
