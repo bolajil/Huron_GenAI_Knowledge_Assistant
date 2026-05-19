@@ -1,30 +1,31 @@
-/**
- * Login Component
- * Per FRONTEND_MIGRATION_GUIDE.md - components/Auth/Login.jsx
- */
 "use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Brain,
+  Building2,
   Shield,
-  Key,
+  Fingerprint,
   Eye,
   EyeOff,
-  LogIn,
-  Building2,
-  Fingerprint,
-  ChevronDown,
-  Brain,
+  ArrowRight,
 } from "lucide-react";
 import { api } from "../../services/api";
 import { useAuth } from "../../contexts/auth-context";
+import { SmokeyBackground } from "../ui/login-form";
 
 type AuthMethod = "local" | "azure" | "okta";
 
+const AUTH_TABS: { value: AuthMethod; label: string }[] = [
+  { value: "local", label: "Local" },
+  { value: "azure", label: "Azure AD" },
+  { value: "okta", label: "Okta SSO" },
+];
+
 export function Login() {
   const router = useRouter();
-  const { login } = useAuth();
+  useAuth();
   const [authMethod, setAuthMethod] = useState<AuthMethod>("local");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -40,19 +41,10 @@ export function Login() {
     e.preventDefault();
     setError("");
     setIsLoading(true);
-
     try {
-      const response = await api.login(
-        formData.username,
-        formData.password,
-        authMethod
-      );
-
-      // Store token temporarily for MFA verification
+      const response = await api.login(formData.username, formData.password, authMethod);
       localStorage.setItem("pending_auth_token", response.access_token);
       localStorage.setItem("pending_user", JSON.stringify(response.user));
-
-      // Redirect to MFA verification
       router.push("/mfa");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -66,190 +58,174 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-100 via-blue-50 to-indigo-100 flex flex-col items-center justify-center p-4">
-      {/* Logo and Title */}
-      <div className="text-center mb-8">
-        <div className="flex items-center justify-center gap-3 mb-2">
-          <Brain className="h-10 w-10 text-indigo-600" />
-          <h1 className="text-3xl font-bold text-gray-800">
-            Huron GenAI Knowledge Assistant
-          </h1>
-        </div>
-        <div className="flex items-center justify-center gap-2 text-gray-600">
-          <Shield className="h-5 w-5 text-amber-500" />
-          <span className="text-lg">Enterprise Secure Login</span>
-        </div>
-        <p className="text-gray-500 text-sm mt-1">
-          Production-grade authentication with enterprise security
-        </p>
-      </div>
+    <main className="relative w-screen min-h-screen bg-gray-900 overflow-hidden">
+      <SmokeyBackground color="#1E40AF" />
 
-      {/* Security Status Badges */}
-      <div className="flex gap-4 mb-8 flex-wrap justify-center">
-        <div className="bg-emerald-50 border border-emerald-300 rounded-lg px-4 py-2 flex items-center gap-2 shadow-sm">
-          <Building2 className="h-4 w-4 text-emerald-600" />
-          <span className="text-emerald-700 text-sm font-medium">Active Directory Ready</span>
-        </div>
-        <div className="bg-emerald-50 border border-emerald-300 rounded-lg px-4 py-2 flex items-center gap-2 shadow-sm">
-          <Shield className="h-4 w-4 text-emerald-600" />
-          <span className="text-emerald-700 text-sm font-medium">Okta SSO: Ready</span>
-        </div>
-        <div className="bg-emerald-50 border border-emerald-300 rounded-lg px-4 py-2 flex items-center gap-2 shadow-sm">
-          <Fingerprint className="h-4 w-4 text-emerald-600" />
-          <span className="text-emerald-700 text-sm font-medium">MFA: Enabled</span>
-        </div>
-      </div>
-
-      {/* Auth Method Selector */}
-      <div className="w-full max-w-md mb-4">
-        <label className="text-gray-600 text-sm mb-2 block font-medium">
-          Choose Authentication Method:
-        </label>
-        <div className="relative">
-          <select
-            value={authMethod}
-            onChange={(e) => setAuthMethod(e.target.value as AuthMethod)}
-            className="w-full bg-white border border-gray-300 rounded-lg px-4 py-3 text-gray-800 appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
-          >
-            <option value="local">🔑 Local Login</option>
-            <option value="azure">🏢 Azure Active Directory</option>
-            <option value="okta">🔐 Okta SSO</option>
-          </select>
-          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500 pointer-events-none" />
-        </div>
-      </div>
-
-      {/* Login Form */}
-      <div className="w-full max-w-md bg-white border border-gray-200 rounded-xl p-6 shadow-lg">
-        <div className="flex items-center gap-2 mb-6">
-          <Key className="h-5 w-5 text-amber-500" />
-          <h2 className="text-gray-800 font-semibold">
-            {authMethod === "local" && "Local Authentication"}
-            {authMethod === "azure" && "Azure AD Authentication"}
-            {authMethod === "okta" && "Okta SSO Authentication"}
-          </h2>
-        </div>
-
-        {error && (
-          <div className="bg-red-50 border border-red-300 rounded-lg px-4 py-3 mb-4 text-red-600 text-sm">
-            {error}
+      <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-4 py-8">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-3 mb-2">
+            <Brain className="h-10 w-10 text-blue-400" />
+            <h1 className="text-3xl font-bold text-white">Huron GenAI</h1>
           </div>
-        )}
+          <p className="text-gray-300 text-sm">
+            Knowledge Assistant — Enterprise Secure Login
+          </p>
+        </div>
 
-        {authMethod === "local" ? (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="flex items-center gap-1 text-gray-700 text-sm mb-2 font-medium">
-                <span>👤</span> Username or Email
-              </label>
-              <input
-                type="text"
-                value={formData.username}
-                onChange={(e) =>
-                  setFormData({ ...formData, username: e.target.value })
-                }
-                placeholder="Enter your username or email address"
-                className="w-full bg-gray-50 border border-gray-300 rounded-lg px-4 py-3 text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                required
-              />
+        {/* Card */}
+        <div className="w-full max-w-sm bg-white/10 backdrop-blur-lg rounded-2xl border border-white/20 shadow-2xl p-8 space-y-6">
+          {/* Auth method tabs */}
+          <div className="grid grid-cols-3 gap-1 bg-white/5 rounded-xl p-1">
+            {AUTH_TABS.map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => { setAuthMethod(value); setError(""); }}
+                className={`py-2 px-1 rounded-lg text-xs font-medium transition-all ${
+                  authMethod === value
+                    ? "bg-blue-600 text-white shadow"
+                    : "text-gray-300 hover:text-white"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="bg-red-500/20 border border-red-500/30 rounded-lg px-4 py-3 text-red-300 text-sm">
+              {error}
             </div>
+          )}
 
-            <div>
-              <label className="flex items-center gap-1 text-gray-700 text-sm mb-2 font-medium">
-                <span>🔒</span> Password
-              </label>
-              <div className="relative">
+          {authMethod === "local" ? (
+            <form onSubmit={handleSubmit} className="glass-form space-y-8">
+              {/* Username floating label */}
+              <div className="relative z-0">
                 <input
-                  type={showPassword ? "text" : "password"}
-                  value={formData.password}
-                  onChange={(e) =>
-                    setFormData({ ...formData, password: e.target.value })
-                  }
-                  placeholder="Enter your password"
-                  className="w-full bg-gray-50 border border-gray-300 rounded-lg px-4 py-3 pr-12 text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  type="text"
+                  id="username"
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  className="block py-2.5 px-0 w-full text-sm text-white bg-transparent border-0 border-b-2 border-gray-500 appearance-none focus:outline-none focus:ring-0 focus:border-blue-400 peer"
+                  placeholder=" "
                   required
                 />
+                <label
+                  htmlFor="username"
+                  className="absolute text-sm text-gray-400 duration-300 transform -translate-y-6 scale-75 top-3 -z-10 origin-[0] peer-focus:text-blue-400 peer-placeholder-shown:scale-100 peer-placeholder-shown:translate-y-0 peer-focus:scale-75 peer-focus:-translate-y-6"
+                >
+                  👤 Username or Email
+                </label>
+              </div>
+
+              {/* Password floating label */}
+              <div className="relative z-0">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  id="password"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  className="block py-2.5 px-0 w-full text-sm text-white bg-transparent border-0 border-b-2 border-gray-500 appearance-none focus:outline-none focus:ring-0 focus:border-blue-400 peer pr-8"
+                  placeholder=" "
+                  required
+                />
+                <label
+                  htmlFor="password"
+                  className="absolute text-sm text-gray-400 duration-300 transform -translate-y-6 scale-75 top-3 -z-10 origin-[0] peer-focus:text-blue-400 peer-placeholder-shown:scale-100 peer-placeholder-shown:translate-y-0 peer-focus:scale-75 peer-focus:-translate-y-6"
+                >
+                  🔒 Password
+                </label>
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                  className="absolute right-0 top-2.5 text-gray-400 hover:text-white transition-colors"
                 >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5" />
-                  ) : (
-                    <Eye className="h-5 w-5" />
-                  )}
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
-            </div>
 
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-gray-600 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.rememberMe}
-                  onChange={(e) =>
-                    setFormData({ ...formData, rememberMe: e.target.checked })
-                  }
-                  className="rounded border-gray-300 bg-white text-indigo-600 focus:ring-indigo-500"
-                />
-                Remember me
-              </label>
-              <label className="flex items-center gap-2 text-gray-600 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.trustDevice}
-                  onChange={(e) =>
-                    setFormData({ ...formData, trustDevice: e.target.checked })
-                  }
-                  className="rounded border-gray-300 bg-white text-indigo-600 focus:ring-indigo-500"
-                />
-                Trust device
-              </label>
-            </div>
+              {/* Checkboxes */}
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-gray-300 text-sm cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={formData.rememberMe}
+                    onChange={(e) => setFormData({ ...formData, rememberMe: e.target.checked })}
+                    className="glass-checkbox"
+                  />
+                  Remember me
+                </label>
+                <label className="flex items-center gap-2 text-gray-300 text-sm cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={formData.trustDevice}
+                    onChange={(e) => setFormData({ ...formData, trustDevice: e.target.checked })}
+                    className="glass-checkbox"
+                  />
+                  Trust device
+                </label>
+              </div>
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-semibold py-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 shadow-md"
-            >
-              <LogIn className="h-5 w-5" />
-              {isLoading ? "Authenticating..." : "Login"}
-            </button>
-          </form>
-        ) : (
-          <div className="space-y-4">
-            <p className="text-gray-600 text-sm">
-              {authMethod === "azure"
-                ? "Click below to authenticate with your organization's Azure Active Directory account."
-                : "Click below to authenticate with your Okta SSO credentials."}
-            </p>
-            <button
-              onClick={() => handleSSOLogin(authMethod)}
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 rounded-lg flex items-center justify-center gap-2"
-            >
-              {authMethod === "azure" ? (
-                <>
-                  <Building2 className="h-5 w-5" />
-                  Sign in with Azure AD
-                </>
-              ) : (
-                <>
-                  <Shield className="h-5 w-5" />
-                  Sign in with Okta
-                </>
-              )}
-            </button>
-          </div>
-        )}
+              {/* Submit */}
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="group w-full flex items-center justify-center py-3 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-semibold transition-all duration-300 disabled:opacity-50 shadow-md"
+              >
+                {isLoading ? "Authenticating..." : "Sign In"}
+                {!isLoading && (
+                  <ArrowRight className="ml-2 h-5 w-5 transform group-hover:translate-x-1 transition-transform" />
+                )}
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-4 pt-2">
+              <p className="text-gray-300 text-sm text-center">
+                {authMethod === "azure"
+                  ? "Authenticate via Azure Active Directory"
+                  : "Authenticate via Okta SSO"}
+              </p>
+              <button
+                onClick={() => handleSSOLogin(authMethod)}
+                className="w-full flex items-center justify-center py-3 gap-2 bg-white/20 hover:bg-white/30 border border-white/20 rounded-lg text-white font-semibold transition-all"
+              >
+                {authMethod === "azure" ? (
+                  <>
+                    <Building2 className="h-5 w-5" />
+                    Sign in with Azure AD
+                  </>
+                ) : (
+                  <>
+                    <Shield className="h-5 w-5" />
+                    Sign in with Okta
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Security badges */}
+        <div className="flex gap-5 mt-6 flex-wrap justify-center">
+          <span className="text-xs text-emerald-400/70 flex items-center gap-1.5">
+            <Building2 size={11} /> Active Directory Ready
+          </span>
+          <span className="text-xs text-emerald-400/70 flex items-center gap-1.5">
+            <Shield size={11} /> Okta SSO Ready
+          </span>
+          <span className="text-xs text-emerald-400/70 flex items-center gap-1.5">
+            <Fingerprint size={11} /> MFA Enabled
+          </span>
+        </div>
+
+        <p className="text-gray-400 text-xs mt-4">
+          © 2026 Huron Enterprise. All rights reserved.
+        </p>
       </div>
-
-      <p className="text-gray-500 text-xs mt-8">
-        © 2024 Huron Enterprise. All rights reserved.
-      </p>
-    </div>
+    </main>
   );
 }
 
 export default Login;
-
