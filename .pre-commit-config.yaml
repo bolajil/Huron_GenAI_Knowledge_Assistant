@@ -1,0 +1,73 @@
+# Pre-commit hooks for Huron GenAI Knowledge Assistant
+# Production security and code quality enforcement
+#
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # Security: Detect secrets and credentials
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: package-lock\.json|\.env\.example
+
+  # Security: Detect private keys
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: detect-private-key
+      - id: detect-aws-credentials
+        args: ['--allow-missing-credentials']
+      - id: check-added-large-files
+        args: ['--maxkb=1000']  # Block files >1MB
+      - id: check-merge-conflict
+      - id: check-yaml
+        exclude: \.github/
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+
+  # Python security: Bandit static analysis
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.7
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml', '-r', '-ll']
+        additional_dependencies: ['bandit[toml]']
+        exclude: tests/|_archived/
+
+  # Python code quality
+  - repo: https://github.com/astral-sh/ruff
+    rev: v0.3.0
+    hooks:
+      - id: ruff
+        args: ['--fix', '--exit-non-zero-on-fix']
+      - id: ruff-format
+
+  # Dependency vulnerability scanning
+  - repo: https://github.com/pyupio/safety
+    rev: 2.3.5
+    hooks:
+      - id: safety
+        args: ['--ignore=70612']  # Ignore specific CVEs if needed
+
+  # TypeScript/JavaScript for frontend
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v8.56.0
+    hooks:
+      - id: eslint
+        files: \.(js|jsx|ts|tsx)$
+        types: [file]
+        additional_dependencies:
+          - eslint@8.56.0
+          - '@typescript-eslint/parser@6.21.0'
+          - '@typescript-eslint/eslint-plugin@6.21.0'
+
+# CI/CD integration
+ci:
+  autofix_commit_msg: 'style: auto-fix by pre-commit hooks'
+  autoupdate_commit_msg: 'chore: update pre-commit hooks'
+  skip: [safety]  # Safety check runs in CI, not locally

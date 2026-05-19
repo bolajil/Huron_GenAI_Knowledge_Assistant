@@ -1,0 +1,129 @@
+# Huron GenAI Knowledge Assistant - Python Project Configuration
+# Production-grade settings for 20k+ user platform
+
+[project]
+name = "huron-genai-knowledge-assistant"
+version = "2.0.0"
+description = "Enterprise AI-powered knowledge management system"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary - Huron Consulting"}
+authors = [
+    {name = "Lanre Bolaji", email = "lbolaji@huronconsultinggroup.com"}
+]
+keywords = ["genai", "rag", "knowledge-management", "enterprise", "healthcare"]
+
+[project.urls]
+Repository = "https://github.com/bolajil/Huron_GenAI_Knowledge_Assistant"
+
+# ============================================================
+# Bandit Security Scanner Configuration
+# ============================================================
+[tool.bandit]
+exclude_dirs = ["tests", "_archived", "docs", "node_modules", ".venv"]
+skips = ["B101"]  # Skip assert warnings in non-test code
+targets = ["app", "utils", "backend_huron"]
+
+[tool.bandit.assert_used]
+skips = ["*_test.py", "test_*.py"]
+
+# ============================================================
+# Ruff Linter Configuration (replaces flake8, isort, etc.)
+# ============================================================
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+exclude = [
+    "_archived",
+    ".git",
+    ".venv",
+    "node_modules",
+    "__pycache__",
+    "migrations",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "UP",    # pyupgrade
+    "S",     # flake8-bandit (security)
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # function call in default argument (FastAPI uses this)
+    "S101",  # assert usage (allowed in tests)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"*_test.py" = ["S101"]
+"test_*.py" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "utils", "backend_huron"]
+
+# ============================================================
+# Pytest Configuration
+# ============================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "-ra",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "e2e: End-to-end tests",
+    "security: Security tests",
+    "slow: Slow tests (>5s)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+# ============================================================
+# Coverage Configuration
+# ============================================================
+[tool.coverage.run]
+source = ["app", "utils", "backend_huron"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/_archived/*",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+fail_under = 70
+
+# ============================================================
+# MyPy Type Checking Configuration
+# ============================================================
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = false  # Gradually enable
+ignore_missing_imports = true
+exclude = [
+    "_archived",
+    "migrations",
+]
