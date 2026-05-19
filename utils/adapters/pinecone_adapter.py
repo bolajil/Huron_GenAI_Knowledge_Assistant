@@ -380,6 +380,34 @@ class PineconeAdapter(BaseVectorStore):
             logger.error(f"Search failed in Pinecone index {collection_name}: {e}")
             return []
     
+
+    def search_sync(self, collection_name: str, query_embedding: List[float], 
+                    limit: int = 10, tenant_id: str = "huron", 
+                    dept_id: str = None, namespace: str = None, **kwargs):
+        """Synchronous wrapper for use in LangGraph nodes"""
+        import asyncio
+        import concurrent.futures
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        asyncio.run, 
+                        self.search(collection_name, query_embedding=query_embedding,
+                                   limit=limit, tenant_id=tenant_id, dept_id=dept_id,
+                                   namespace=namespace, **kwargs)
+                    )
+                    return future.result(timeout=30)
+            else:
+                return loop.run_until_complete(
+                    self.search(collection_name, query_embedding=query_embedding,
+                               limit=limit, tenant_id=tenant_id, dept_id=dept_id,
+                               namespace=namespace, **kwargs)
+                )
+        except Exception as e:
+            logger.error(f"search_sync failed: {e}")
+            return []
+
     async def delete_documents(self, 
                                collection_name: str, 
                                document_ids: List[str],

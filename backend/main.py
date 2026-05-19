@@ -16,6 +16,41 @@ import bcrypt
 import sqlite3
 from pathlib import Path
 
+# VaultMind imports for real pipeline
+import sys
+import os
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from utils.tenant_context import TenantContext
+from utils.ingestion_service import IngestionService
+from utils.rag_orchestrator import RAGOrchestrator
+
+# Lazy-loaded singletons
+_ingestion_service = None
+_rag_orchestrator = None
+
+def get_ingestion_service():
+    global _ingestion_service
+    if _ingestion_service is None:
+        _ingestion_service = IngestionService(
+            enable_pinecone=True,
+            enable_dlp_scan=True,
+            enable_quality_gate=True,
+            enable_classification=False,
+            pinecone_index=os.getenv('PINECONE_INDEX', 'huron-enterprise-knowledge'),
+        )
+    return _ingestion_service
+
+def get_rag_orchestrator():
+    global _rag_orchestrator
+    if _rag_orchestrator is None:
+        _rag_orchestrator = RAGOrchestrator(
+            pinecone_index=os.getenv('PINECONE_INDEX', 'huron-enterprise-knowledge'),
+        )
+    return _rag_orchestrator
 app = FastAPI(
     title="VaultMind GenAI Knowledge Assistant API",
     description="Enterprise AI-powered knowledge management API",
