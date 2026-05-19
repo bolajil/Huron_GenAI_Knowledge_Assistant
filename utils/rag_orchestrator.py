@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Agentic RAG Orchestrator
 
@@ -391,7 +392,7 @@ class RAGOrchestrator:
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(
                         asyncio.run,
-                        self.pinecone.search(
+                        self.pinecone.search_sync(
                             collection_name=self.pinecone_index,
                             query_embedding=query_embedding,
                             limit=top_k,
@@ -403,7 +404,7 @@ class RAGOrchestrator:
                     results = future.result()
             else:
                 results = asyncio.run(
-                    self.pinecone.search(
+                    self.pinecone.search_sync(
                         collection_name=self.pinecone_index,
                         query_embedding=query_embedding,
                         limit=top_k,

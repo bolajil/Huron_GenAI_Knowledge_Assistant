@@ -29,6 +29,18 @@ export interface QueryResponse {
   sources: Array<{ title: string; page?: number }>;
 }
 
+export interface IngestResponse {
+  status: string;
+  document_id: string;
+  file: string;
+  department: string;
+  namespace: string;
+  parent_chunks: number;
+  child_chunks: number;
+  pinecone_upsert: boolean;
+  warnings: string[];
+}
+
 // Helper to get auth header
 const getAuthHeader = (): HeadersInit => {
   const token = localStorage.getItem("auth_token");
@@ -82,8 +94,8 @@ export const api = {
   
   async query(
     queryText: string,
-    indexName: string = "default_faiss",
-    topK: number = 5
+    department: string = "general",
+    topK: number = 10
   ): Promise<QueryResponse> {
     const response = await fetch(`${API_BASE_URL}/api/v1/query`, {
       method: "POST",
@@ -93,7 +105,7 @@ export const api = {
       },
       body: JSON.stringify({
         query: queryText,
-        index_name: indexName,
+        department: department,
         top_k: topK,
       }),
     });
@@ -136,13 +148,13 @@ export const api = {
   
   async ingestDocument(
     file: File,
-    indexName: string = "default_faiss",
-    department?: string
-  ): Promise<{ status: string; message: string }> {
+    department: string = "general",
+    sensitivityLevel: string = "internal"
+  ): Promise<IngestResponse> {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("index_name", indexName);
-    if (department) formData.append("department", department);
+    formData.append("department", department);
+    formData.append("sensitivity_level", sensitivityLevel);
 
     const response = await fetch(`${API_BASE_URL}/api/v1/ingest`, {
       method: "POST",
