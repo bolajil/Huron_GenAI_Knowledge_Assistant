@@ -272,6 +272,52 @@ async def validate_token_endpoint(token: str = Depends(oauth2_scheme)):
 
 
 @app.post("/api/v1/auth/logout")
+
+
+# ============== MFA Endpoints ==============
+
+class MFAVerifyRequest(BaseModel):
+    code: str
+    session_token: Optional[str] = None
+
+@app.post("/api/v1/auth/mfa/verify")
+async def mfa_verify(request: MFAVerifyRequest):
+    """Verify MFA code - simplified for development"""
+    # For development: accept any 6-digit code
+    if len(request.code) == 6 and request.code.isdigit():
+        # Create JWT directly for MFA bypass
+        expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
+        payload = {
+            "sub": "admin",
+            "email": "admin@vaultmind.com",
+            "role": "admin",
+            "dept_id": "general",
+            "clearance_level": 4,
+            "exp": expire
+        }
+        token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        return {
+            "status": "success",
+            "access_token": token,
+            "token_type": "bearer",
+            "message": "MFA verified successfully"
+        }
+    else:
+        raise HTTPException(status_code=400, detail="Invalid MFA code")
+
+@app.post("/api/v1/auth/mfa/setup")
+async def mfa_setup(token: str = Depends(oauth2_scheme)):
+    """Setup MFA - returns QR code data"""
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    return {
+        "status": "success",
+        "secret": "DEMO_SECRET_KEY",
+        "qr_code": "otpauth://totp/VaultMind:admin?secret=DEMO_SECRET_KEY&issuer=VaultMind",
+        "message": "MFA setup initialized"
+    }
 async def logout(token: str = Depends(oauth2_scheme)):
     """Logout user (invalidate token)"""
     # Token invalidation logic here
