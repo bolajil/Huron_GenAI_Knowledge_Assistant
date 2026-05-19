@@ -21,7 +21,6 @@ cryptography>=41.0.0
 =======
 >>>>>>> clean-master
 # Existing dependencies (if not already installed)
-streamlit>=1.28.0
 sentence-transformers>=2.2.2
 faiss-cpu>=1.7.4
 pypdf>=3.17.0

@@ -1,4 +1,3 @@
-streamlit
 python-dotenv
 requests
 newspaper3k
@@ -36,7 +35,6 @@ groq
 langchain-groq
 
 # Authentication and Security Dependencies
-streamlit-authenticator==0.2.3
 bcrypt==4.0.1
 pyotp==2.9.0
 qrcode==7.4.2
