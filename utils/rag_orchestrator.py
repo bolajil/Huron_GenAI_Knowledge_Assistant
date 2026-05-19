@@ -71,7 +71,7 @@ except ImportError:
 
 try:
     from utils.adapters.pinecone_adapter import PineconeAdapter, PINECONE_AVAILABLE as PC_AVAIL
-    from utils.multi_vector_storage_interface import VectorStoreConfig
+    from utils.multi_vector_storage_interface import VectorStoreConfig, VectorStoreType
     PINECONE_AVAILABLE = PC_AVAIL
 except ImportError:
     PINECONE_AVAILABLE = False
@@ -244,8 +244,7 @@ class RAGOrchestrator:
         if PINECONE_AVAILABLE and PineconeAdapter and VectorStoreConfig:
             try:
                 config = VectorStoreConfig(
-                    name="pinecone-rag",
-                    store_type="pinecone",
+                    store_type=VectorStoreType.PINECONE,
                     connection_params={
                         "api_key": os.getenv("PINECONE_API_KEY"),
                         "vector_dimension": 384 if self.embedding_model == "all-MiniLM-L6-v2" else 1536,

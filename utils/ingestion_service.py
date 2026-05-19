@@ -70,7 +70,7 @@ except ImportError:
 # Import Pinecone adapter for vector store upsert
 try:
     from utils.adapters.pinecone_adapter import PineconeAdapter, PINECONE_AVAILABLE
-    from utils.multi_vector_storage_interface import VectorStoreConfig
+    from utils.multi_vector_storage_interface import VectorStoreConfig, VectorStoreType
 except ImportError:
     PINECONE_AVAILABLE = False
     PineconeAdapter = None
@@ -196,8 +196,7 @@ class IngestionService:
         if self.enable_pinecone and PineconeAdapter and VectorStoreConfig:
             try:
                 config = VectorStoreConfig(
-                    name="pinecone-production",
-                    store_type="pinecone",
+                    store_type=VectorStoreType.PINECONE,
                     connection_params={
                         "api_key": os.getenv("PINECONE_API_KEY"),
                         "vector_dimension": 384 if embedding_model == "all-MiniLM-L6-v2" else 1536,
