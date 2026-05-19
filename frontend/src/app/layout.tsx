@@ -16,7 +16,7 @@ const firaCode = Fira_Code({
 });
 
 export const metadata: Metadata = {
-  title: "Huron Knowledge Assistant",
+  title: "Huron GenAI Knowledge Assistant",
   description: "Enterprise AI-powered knowledge management system",
   icons: {
     icon: "/favicon.ico",
@@ -30,7 +30,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${firaCode.variable} font-sans antialiased`}>
+      <body className={`${inter.variable} ${firaCode.variable} font-sans antialiased bg-sky-100`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
