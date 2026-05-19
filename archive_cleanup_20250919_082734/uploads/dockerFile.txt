@@ -1,8 +1,0 @@
-# A basic apache server. To use either add or bind mount content under /var/www
-FROM ubuntu:openjdk:11
-
-ADD target/ABCtechnologies-1.0.war ABCtechnologies-1.0.war
-
-EXPOSE 8080
-
-ENTRTPOINT ["java", "-war", "ABCtechnologies-1.0.war"]

@@ -1,4 +1,55 @@
+# =============================================================================
+# Huron GenAI Knowledge Assistant - Production .gitignore
+# Phase 0 Security Cleanup - May 2026
+# =============================================================================
+
+# =============================================================================
+# CRITICAL SECURITY - Personal/Sensitive Documents
+# =============================================================================
+# NEVER commit personal documents
+**/uploads/
+uploads/
+archive_cleanup_*/uploads/
+
+# Sensitive document patterns
+*social-security*
+*checkstub*
+*paystub*
+*pay-stub*
+*w-4*
+*w4*
+*direct-deposit*
+*_DD.pdf
+*resume*.pdf
+*tax*.pdf
+
+# =============================================================================
+# Environment & Secrets
+# =============================================================================
+.env
+.env.local
+.env.*.local
+*.env
+*.env.bak
+!.env.example
+
+# Streamlit secrets
+.streamlit/secrets.toml
+.streamlit/
+
+# Config secrets
+config/storage.env
+config/*.env
+config/*.env.bak
+!config/*.env.example
+!config/*.yml
+
+# Encryption keys (generated locally)
+app/auth/.encryption_key
+
+# =============================================================================
 # Python
+# =============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -24,232 +75,125 @@ wheels/
 venv/
 ENV/
 env/
-.venv
+.venv/
 
-# IDE
+# =============================================================================
+# IDE & Editors
+# =============================================================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+*.sublime-*
 
-# Environment variables
-.env
-.env.local
-*.env
+# =============================================================================
+# OS Files
+# =============================================================================
+.DS_Store
+Thumbs.db
+desktop.ini
+*.lnk
 
-# Logs
-*.log
-logs/
-mcp_logs.db
-
-# Data files
-data/
+# =============================================================================
+# Database Files
+# =============================================================================
 *.db
 *.sqlite
 *.sqlite3
+mcp_logs.db
 
-# Temporary files
+# =============================================================================
+# Logs & Temp Files
+# =============================================================================
+*.log
+logs/
 *.tmp
 *.temp
 *.bak
 *.backup
 *.old
 
-# OS files
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Archive directories (cleanup archives)
-archive_cleanup_*/
-archive_*/
-
-# Cleanup scripts (temporary)
-safe_cleanup_script.py
-run_cleanup.bat
-
-# Test files (if scattered in root)
-test_*.py
-*_test.py
-
-# Debug files
-debug_*.py
-diagnose_*.py
-diagnose_*.ps1
-
-# Fix/patch files
-fix_*.py
-patch_*.py
-*_fix.py
-
-# Force/reset files
-force_*.py
-reset_*.py
-force_*.txt
-
-# Temporary status files
-*.txt
-!requirements*.txt
-!README.txt
-
-# Node modules
+# =============================================================================
+# Node.js / Frontend
+# =============================================================================
 node_modules/
 package-lock.json
-
-# Next.js
 .next/
 out/
 .vercel/
+.turbo/
 
-# Jupyter Notebooks
-.ipynb_checkpoints/
-*.ipynb
-
-# Model files (large)
-*.pkl
-*.h5
-*.pt
-*.pth
-*.onnx
-
-# Vector store indices
-faiss_index/
-*.index
-*.faiss
-
-# Compiled files
-*.pyc
-*.pyo
-*.pyd
-
-# Coverage reports
+# =============================================================================
+# Testing & Coverage
+# =============================================================================
 htmlcov/
 .coverage
 .coverage.*
 coverage.xml
 *.cover
-
-# pytest
 .pytest_cache/
 .tox/
 
-# mypy
+# =============================================================================
+# Type Checkers
+# =============================================================================
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
- 
-# Streamlit secrets (contains API keys) 
-.streamlit/secrets.toml 
-.streamlit/ 
 
-# ============================================================
-# API Keys and Secrets - NEVER COMMIT THESE
-# ============================================================
+# =============================================================================
+# ML/AI Model Files (Large)
+# =============================================================================
+*.pkl
+*.h5
+*.pt
+*.pth
+*.onnx
+*.bin
+model_snapshot/
 
-# Streamlit secrets
-.streamlit/secrets.toml
-.streamlit/
+# =============================================================================
+# Vector Store Indices (Rebuild locally)
+# =============================================================================
+faiss_index/
+indexes/
+*.index
+*.faiss
 
-# AWS and Storage Credentials  
-config/storage.env
-config/storage.env.bak
-config/*.env
-config/*.env.bak
+# =============================================================================
+# Jupyter Notebooks
+# =============================================================================
+.ipynb_checkpoints/
+*.ipynb
 
-# Environment files
-.env
-.env.local
-.env.*.local
-*.env
-*.env.bak
+# =============================================================================
+# Archives & Cleanup
+# =============================================================================
+archive_cleanup_*/
+archive_*/
+_archived/
 
-# Backup files with potential secrets
-*.bak
-*~
+# =============================================================================
+# Development Scripts (keep in repo but ignore local variants)
+# =============================================================================
+# Uncomment below if you want to ignore all test/debug files:
+# test_*.py
+# debug_*.py
+# fix_*.py
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
+# =============================================================================
+# Build Artifacts
+# =============================================================================
+*.pyc
+*.pyo
+*.pyd
+*.dll
+*.dylib
 
-# Logs
-*.log
-logs/
-mcp_logs.db
-<<<<<<< HEAD
-
-# ============================================================
-# API Keys and Secrets - NEVER COMMIT THESE
-# ============================================================
-
-# Streamlit secrets
-.streamlit/secrets.toml
-.streamlit/
-
-# AWS and Storage Credentials  
-config/storage.env
-config/storage.env.bak
-config/*.env
-config/*.env.bak
-
-# Environment files
-.env
-.env.local
-.env.*.local
-*.env
-*.env.bak
-
-# Backup files with potential secrets
-*.bak
-*~
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Logs
-*.log
-logs/
-mcp_logs.db
-
-# ============================================================
-# API Keys and Secrets - NEVER COMMIT THESE
-# ============================================================
-
-# Streamlit secrets
-.streamlit/secrets.toml
-.streamlit/
-
-# AWS and Storage Credentials  
-config/storage.env
-config/storage.env.bak
-config/*.env
-config/*.env.bak
-
-# Environment files
-.env
-.env.local
-.env.*.local
-*.env
-*.env.bak
-
-# Backup files with potential secrets
-*.bak
-*~
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Logs
-*.log
-logs/
-mcp_logs.db
-=======
->>>>>>> clean-master
+# =============================================================================
+# Backups
+# =============================================================================
+backups/
+*.backup
