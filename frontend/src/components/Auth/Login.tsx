@@ -18,11 +18,13 @@ import {
   Brain,
 } from "lucide-react";
 import { api } from "../../services/api";
+import { useAuth } from "../../contexts/auth-context";
 
 type AuthMethod = "local" | "azure" | "okta";
 
 export function Login() {
   const router = useRouter();
+  const { login } = useAuth();
   const [authMethod, setAuthMethod] = useState<AuthMethod>("local");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -46,11 +48,11 @@ export function Login() {
         authMethod
       );
 
-      // Store auth data
-      localStorage.setItem("auth_token", response.access_token);
-      localStorage.setItem("user", JSON.stringify(response.user));
+      // Store token temporarily for MFA verification
+      localStorage.setItem("pending_auth_token", response.access_token);
+      localStorage.setItem("pending_user", JSON.stringify(response.user));
 
-      // Redirect to MFA verification (per enterprise_auth.py require_mfa: bool = True)
+      // Redirect to MFA verification
       router.push("/mfa");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -250,3 +252,4 @@ export function Login() {
 }
 
 export default Login;
+

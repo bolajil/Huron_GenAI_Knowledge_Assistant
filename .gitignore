@@ -93,9 +93,14 @@ force_*.txt
 !requirements*.txt
 !README.txt
 
-# Node modules (if any)
+# Node modules
 node_modules/
 package-lock.json
+
+# Next.js
+.next/
+out/
+.vercel/
 
 # Jupyter Notebooks
 .ipynb_checkpoints/

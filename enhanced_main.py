@@ -369,6 +369,61 @@ async def list_documents(tag: Optional[str] = None, file_type: Optional[str] = N
         logger.error(f"Error listing documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/v1/indexes")
+async def list_indexes():
+    """
+    List all available FAISS indexes.
+    Discovers indexes from data/faiss_index directory.
+    """
+    from pathlib import Path
+    import pickle
+    
+    indexes = []
+    faiss_dir = Path("data/faiss_index")
+    
+    if faiss_dir.exists():
+        for item in faiss_dir.iterdir():
+            if item.is_dir():
+                # Check for index files
+                has_faiss = (item / "index.faiss").exists()
+                has_pkl = (item / "index.pkl").exists() or (item / "documents.pkl").exists()
+                
+                if has_faiss or has_pkl:
+                    # Calculate size
+                    size_bytes = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                    size_mb = size_bytes / (1024 * 1024)
+                    
+                    # Count documents
+                    doc_count = 0
+                    for pkl_name in ["documents.pkl", "index.pkl"]:
+                        pkl_file = item / pkl_name
+                        if pkl_file.exists():
+                            try:
+                                with open(pkl_file, 'rb') as f:
+                                    docs = pickle.load(f)
+                                    doc_count = len(docs) if isinstance(docs, list) else 0
+                                break
+                            except:
+                                pass
+                    
+                    indexes.append({
+                        "name": item.name,
+                        "type": "FAISS",
+                        "documents": doc_count,
+                        "size_mb": round(size_mb, 2),
+                        "status": "active"
+                    })
+    
+    # Sort by name
+    indexes.sort(key=lambda x: x["name"])
+    
+    return {
+        "status": "success",
+        "count": len(indexes),
+        "indexes": indexes
+    }
+
 # Run the application if this module is executed directly
 if __name__ == "__main__":
     # Get the port from environment variable or use default

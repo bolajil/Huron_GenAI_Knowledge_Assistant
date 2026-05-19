@@ -103,13 +103,26 @@ def authenticate_user(username: str, password: str):
 
 
 def create_token(user: dict) -> str:
-    """Create JWT token"""
+    """Create JWT token with department namespace isolation"""
     expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
+    
+    # Map role to clearance level for namespace access control
+    clearance_map = {
+        "admin": 4,      # Full access to all namespaces
+        "power_user": 3, # Extended access with cross-dept queries
+        "user": 2,       # Standard dept-scoped access
+        "viewer": 1      # Read-only dept-scoped access
+    }
+    
     payload = {
         "sub": user["username"],
         "email": user["email"],
         "role": user["role"],
-        "exp": expire
+        "dept_id": user.get("department", "general"),  # Department namespace isolation
+        "clearance_level": clearance_map.get(user["role"], 2),  # Access level
+        "namespace_scope": [user.get("department", "general")],  # Allowed namespaces
+        "exp": expire,
+        "iat": datetime.utcnow()
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -334,6 +347,62 @@ async def get_stats(token: str = Depends(oauth2_scheme)):
         "queries_today": 1429,
         "active_users": 342,
         "avg_response_time": 1.2
+    }
+
+
+# ============== Index Management Endpoints ==============
+
+@app.get("/api/v1/indexes")
+async def list_indexes():
+    """
+    List all available FAISS indexes.
+    Discovers indexes from data/faiss_index directory.
+    """
+    from pathlib import Path
+    import pickle as pkl
+    
+    indexes = []
+    faiss_dir = Path(__file__).parent.parent / "data" / "faiss_index"
+    
+    if faiss_dir.exists():
+        for item in faiss_dir.iterdir():
+            if item.is_dir():
+                # Check for index files
+                has_faiss = (item / "index.faiss").exists()
+                has_pkl = (item / "index.pkl").exists() or (item / "documents.pkl").exists()
+                
+                if has_faiss or has_pkl:
+                    # Calculate size
+                    size_bytes = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                    size_mb = size_bytes / (1024 * 1024)
+                    
+                    # Count documents
+                    doc_count = 0
+                    for pkl_name in ["documents.pkl", "index.pkl"]:
+                        pkl_file = item / pkl_name
+                        if pkl_file.exists():
+                            try:
+                                with open(pkl_file, 'rb') as f:
+                                    docs = pkl.load(f)
+                                    doc_count = len(docs) if isinstance(docs, list) else 0
+                                break
+                            except:
+                                pass
+                    
+                    indexes.append({
+                        "name": item.name,
+                        "type": "FAISS",
+                        "documents": doc_count,
+                        "size_mb": round(size_mb, 2),
+                        "status": "active"
+                    })
+    
+    indexes.sort(key=lambda x: x["name"])
+    
+    return {
+        "status": "success",
+        "count": len(indexes),
+        "indexes": indexes
     }
 
 
