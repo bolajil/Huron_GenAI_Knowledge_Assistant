@@ -2,10 +2,12 @@
 Real Okta SSO integration for VaultMind enterprise authentication
 """
 
-import streamlit as st
+import logging
 import requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from urllib.parse import urlencode
 import secrets
 import base64
@@ -25,8 +27,8 @@ class OktaConnector:
         if not state:
             state = secrets.token_urlsafe(32)
         
-        # Store state in session for validation
-        st.session_state.oauth_state = state
+        # Return state for caller to store (FastAPI stores in JWT or session)
+        self._last_state = state  # Keep locally for validation
         
         auth_params = {
             'client_id': self.okta_config['client_id'],
@@ -45,9 +47,9 @@ class OktaConnector:
             return None
         
         # Validate state parameter
-        if state != st.session_state.get('oauth_state'):
-            st.error("Invalid OAuth state parameter")
-            return None
+        if state != getattr(self, '_last_state', None):
+            logger.error("Invalid OAuth state parameter")
+            raise ValueError("Invalid OAuth state parameter")
         
         try:
             from app.auth.config_manager import security_config_manager
@@ -58,8 +60,8 @@ class OktaConnector:
             )
             
             if not client_secret:
-                st.error("Okta client secret not configured")
-                return None
+                logger.error("Okta client secret not configured")
+                raise ValueError("Okta client secret not configured")
             
             # Token endpoint
             token_url = f"https://{self.okta_config['domain']}/oauth2/{self.okta_config['authorization_server']}/v1/token"
@@ -80,11 +82,11 @@ class OktaConnector:
             return response.json()
             
         except requests.RequestException as e:
-            st.error(f"Token exchange failed: {str(e)}")
-            return None
+            logger.error(f"Token exchange failed: {str(e)}")
+            raise ValueError(f"Token exchange failed: {str(e)}")
         except Exception as e:
-            st.error(f"Okta authentication error: {str(e)}")
-            return None
+            logger.error(f"Okta authentication error: {str(e)}")
+            raise ValueError(f"Okta authentication error: {str(e)}")
     
     def get_user_info(self, access_token: str) -> Optional[Dict[str, Any]]:
         """Get user information from Okta using access token"""
@@ -120,10 +122,10 @@ class OktaConnector:
             return user_info
             
         except requests.RequestException as e:
-            st.error(f"Failed to get user info: {str(e)}")
+            logger.error(f"Failed to get user info: {str(e)}")
             return None
         except Exception as e:
-            st.error(f"Okta user info error: {str(e)}")
+            logger.error(f"Okta user info error: {str(e)}")
             return None
     
     def map_groups_to_role(self, groups: list) -> str:
@@ -150,38 +152,14 @@ class OktaConnector:
         # Default to viewer
         return 'viewer'
     
-    def initiate_sso_login(self):
-        """Initiate Okta SSO login flow"""
+    def initiate_sso_login(self) -> Optional[str]:
+        """Initiate Okta SSO login flow - returns auth URL for FastAPI to redirect"""
         if not self.okta_config.get("configured", False):
-            st.error("Okta SSO is not configured")
-            return False
+            logger.error("Okta SSO is not configured")
+            return None
         
-        # Generate authorization URL
-        auth_url = self.get_authorization_url()
-        
-        if auth_url:
-            st.markdown(f"""
-            ### 🔐 Okta SSO Login
-            
-            Click the button below to login with your Okta credentials:
-            
-            <a href="{auth_url}" target="_self">
-                <button style="
-                    background-color: #007dc1;
-                    color: white;
-                    padding: 12px 24px;
-                    border: none;
-                    border-radius: 6px;
-                    font-size: 16px;
-                    cursor: pointer;
-                    text-decoration: none;
-                ">🔐 Login with Okta</button>
-            </a>
-            """, unsafe_allow_html=True)
-            
-            return True
-        
-        return False
+        # Generate authorization URL (React frontend handles redirect)
+        return self.get_authorization_url()
     
     def handle_callback(self, code: str, state: str) -> Optional[Dict[str, Any]]:
         """Handle OAuth callback and complete authentication"""

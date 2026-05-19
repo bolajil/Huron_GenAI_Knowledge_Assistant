@@ -7,9 +7,11 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
-import streamlit as st
+import logging
 
 from app.utils.encryption import credential_manager
+
+logger = logging.getLogger(__name__)
 
 class SecurityConfigManager:
     """Manages enterprise authentication configuration"""
@@ -90,7 +92,7 @@ class SecurityConfigManager:
             self._deep_merge(merged_config, config)
             return merged_config
         except Exception as e:
-            st.error(f"Error loading security configuration: {str(e)}")
+            logger.error(f"Error loading security configuration: {str(e)}")
             return self.default_config.copy()
     
     def save_config(self, config: Dict[str, Any], updated_by: str = "admin") -> bool:
@@ -104,7 +106,7 @@ class SecurityConfigManager:
             
             return True
         except Exception as e:
-            st.error(f"Error saving security configuration: {str(e)}")
+            logger.error(f"Error saving security configuration: {str(e)}")
             return False
     
     def _deep_merge(self, target: Dict, source: Dict):

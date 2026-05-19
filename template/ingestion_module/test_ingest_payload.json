@@ -1,6 +1,0 @@
-{
-  "content": "This is a test document for ingestion.",
-  "index_name": "test_index",
-  "chunk_size": 500,
-  "chunk_overlap": 50
-}
