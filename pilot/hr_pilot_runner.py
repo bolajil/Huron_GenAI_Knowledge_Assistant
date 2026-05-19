@@ -30,8 +30,16 @@ import json
 
 logger = logging.getLogger(__name__)
 
+# Add parent directory to path for imports
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 # Import sample documents
-from pilot.hr_sample_documents import HR_SAMPLE_DOCUMENTS
+try:
+    from pilot.hr_sample_documents import HR_SAMPLE_DOCUMENTS
+except ImportError:
+    from hr_sample_documents import HR_SAMPLE_DOCUMENTS
 
 # Import components
 try:
