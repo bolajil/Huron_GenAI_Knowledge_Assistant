@@ -1,20 +1,29 @@
-# VaultMind → Huron Enterprise Knowledge Platform
-# Department Namespace Registry
+# Huron GenAI Knowledge Assistant
+# Department Namespace Registry - Production Configuration
 # 
 # This is the single source of truth for:
-# - Department-to-namespace mapping
-# - Attention profiles (reranking weights)
-# - Access control settings
+# - Department-to-namespace mapping (Pinecone isolation)
+# - Attention profiles (reranking weights per department)
+# - Access control settings (clearance levels)
 # - Document type configurations
+# - Web crawler seed URLs
+#
+# Namespace Format: vaultmind-{tenant}-{dept}-{type}
+# Example: vaultmind-huron-legal-general
+#
+# Author: Production Scalability Team
+# Version: 2.0 - May 2026
 
 # ===== GLOBAL SETTINGS =====
 global:
+  tenant_id: "huron"
   pinecone_index: "huron-enterprise-knowledge"
   embedding_model: "text-embedding-3-large"
   embedding_dimension: 1536
   metric: "cosine"
   default_top_k: 40  # Initial retrieval before reranking
   reranked_top_k: 8  # Final results after reranking
+  namespace_prefix: "vaultmind-huron"  # All namespaces start with this
   
 # ===== DEPARTMENT DEFINITIONS =====
 departments:
@@ -110,12 +119,18 @@ departments:
       external_namespace: "clinical_external"
       ttl_days: 30  # Shorter TTL for clinical info
 
-  # ----- HUMAN RESOURCES -----
+  # ----- HUMAN RESOURCES ----- (PILOT DEPARTMENT - Phase 4)
   hr:
     namespace: "hr"
+    full_namespace: "vaultmind-huron-hr-general"  # Full Pinecone namespace
     display_name: "Human Resources"
     classification: "Confidential"
     dedicated_nodes: false  # Shared read pool
+    
+    # Pilot configuration
+    is_pilot: true
+    pilot_start_date: "2026-05-01"
+    pilot_users: 50
     
     document_types:
       - policies
@@ -123,11 +138,19 @@ departments:
       - org_charts
       - handbooks
       - training_materials
+      - pto_policy
+      - performance_reviews
       
     attention_profile:
       recency_weight: 0.70
       authority_boost: 1.00
       confidence_threshold: 0.70
+      
+    # Pilot test queries (from hr_pilot_runner.py)
+    pilot_queries:
+      - "How many PTO days do I get after 2 years?"
+      - "What are the health insurance options?"
+      - "How do I submit an expense report?"
       
     web_crawler:
       enabled: false
