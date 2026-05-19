@@ -7,6 +7,9 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Shield, Smartphone, Key, CheckCircle, AlertCircle, Mail, MessageSquare } from "lucide-react";
+import { useAuth } from "../../contexts/auth-context";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 type MFAMethod = "totp" | "email" | "sms";
 
@@ -27,6 +30,7 @@ const AUTHENTICATOR_APPS: AuthenticatorOption[] = [
 
 export default function MFAPage() {
   const router = useRouter();
+  const { login } = useAuth();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
@@ -43,26 +47,23 @@ export default function MFAPage() {
   const [userName, setUserName] = useState("admin");
 
   useEffect(() => {
-    // Get logged in user info
-    const savedUser = localStorage.getItem("user");
-    if (savedUser) {
+    // Get pending user info from login
+    const pendingUser = localStorage.getItem("pending_user");
+    if (pendingUser) {
       try {
-        const user = JSON.parse(savedUser);
-        setUserEmail(user.email || "admin@vaultmind.ai");
+        const user = JSON.parse(pendingUser);
+        setUserEmail(user.email || "admin@huron.com");
         setUserName(user.username || "admin");
       } catch (e) {
         console.error("Failed to parse user data");
       }
+    } else {
+      // No pending auth, redirect to login
+      router.push("/");
     }
-    
-    // Check if user needs MFA setup or verification
-    const mfaSetupRequired = localStorage.getItem("mfa_setup_required");
-    if (mfaSetupRequired === "true") {
-      setIsSetup(true);
-    }
-  }, []);
+  }, [router]);
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
     if (code.length !== 6) {
       setError("Please enter a 6-digit code");
       return;
@@ -71,16 +72,40 @@ export default function MFAPage() {
     setIsVerifying(true);
     setError("");
 
-    // Demo mode: Accept any valid 6-digit code
-    // In production, this would verify against the backend
-    localStorage.setItem("mfa_verified", "true");
-    localStorage.setItem("mfa_method", mfaMethod);
-    localStorage.setItem("mfa_app", selectedApp);
-    
-    // Small delay for UX feedback
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 500);
+    try {
+      const pendingToken = localStorage.getItem("pending_auth_token");
+      const pendingUser = localStorage.getItem("pending_user");
+
+      // Verify MFA code with backend
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/mfa/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, token: pendingToken }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.verified) {
+        // MFA verified - complete login
+        const user = JSON.parse(pendingUser || "{}");
+        login(pendingToken || "", user);
+
+        // Clean up pending auth
+        localStorage.removeItem("pending_auth_token");
+        localStorage.removeItem("pending_user");
+        localStorage.setItem("mfa_verified", "true");
+        localStorage.setItem("mfa_method", mfaMethod);
+
+        // Redirect to dashboard
+        router.push("/dashboard");
+      } else {
+        setError(data.detail || "Invalid MFA code");
+      }
+    } catch (err) {
+      setError("Failed to verify MFA code");
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   return (

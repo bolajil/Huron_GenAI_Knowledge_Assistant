@@ -1,31 +1,51 @@
 /**
- * Chat Interface Component
- * Per FRONTEND_MIGRATION_GUIDE.md - components/Chat/ChatInterface.jsx
+ * ChatInterface - Real Chat with Huron Knowledge Base
+ * Uses real FAISS search and OpenAI
  */
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, Bot, User, Trash2 } from "lucide-react";
-import { api } from "../../services/api";
+import { Send, Loader2, Bot, User, Trash2, RefreshCw } from "lucide-react";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  sources?: Array<{title: string}>;
+}
+
+interface IndexInfo {
+  name: string;
+  type: string;
+  documents: number;
 }
 
 export function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState("default_faiss");
+  const [selectedIndex, setSelectedIndex] = useState("HR_Pilot_index");
+  const [availableIndexes, setAvailableIndexes] = useState<IndexInfo[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const availableIndexes = [
-    { value: "default_faiss", label: "Default FAISS" },
-    { value: "AWS_index", label: "AWS Index" },
-    { value: "ByLaw_index", label: "ByLaw Index" },
-  ];
+  // Fetch real indexes on mount
+  useEffect(() => {
+    const fetchIndexes = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/indexes`);
+        const data = await response.json();
+        if (data.indexes && data.indexes.length > 0) {
+          setAvailableIndexes(data.indexes);
+          setSelectedIndex(data.indexes[0].name);
+        }
+      } catch (error) {
+        console.error("Failed to fetch indexes:", error);
+      }
+    };
+    fetchIndexes();
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -49,25 +69,32 @@ export function ChatInterface() {
     setLoading(true);
 
     try {
-      const response = await api.chat(
-        messages.concat(userMessage).map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
-        selectedIndex
-      );
+      const response = await fetch(`${API_BASE_URL}/api/v1/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: messages.concat(userMessage).map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+          index_name: selectedIndex,
+        }),
+      });
+
+      const data = await response.json();
 
       const assistantMessage: Message = {
         role: "assistant",
-        content: response.response,
+        content: data.response || data.detail || "No response received",
         timestamp: new Date(),
+        sources: data.sources,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
       const errorMessage: Message = {
         role: "assistant",
-        content: "Sorry, I encountered an error processing your request. Please try again.",
+        content: "Sorry, I encountered an error. Make sure the Huron backend is running on port 8000.",
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -83,13 +110,10 @@ export function ChatInterface() {
     }
   };
 
-  const clearChat = () => {
-    setMessages([]);
-  };
+  const clearChat = () => setMessages([]);
 
   return (
     <div className="flex flex-col h-[calc(100vh-12rem)]">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2">
@@ -102,104 +126,79 @@ export function ChatInterface() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Index Selector */}
           <select
             value={selectedIndex}
             onChange={(e) => setSelectedIndex(e.target.value)}
             className="px-3 py-2 rounded-lg bg-background border border-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
-            {availableIndexes.map((idx) => (
-              <option key={idx.value} value={idx.value}>
-                {idx.label}
-              </option>
-            ))}
+            {availableIndexes.length > 0 ? (
+              availableIndexes.map((idx) => (
+                <option key={idx.name} value={idx.name}>
+                  {idx.name} ({idx.documents} docs)
+                </option>
+              ))
+            ) : (
+              <option value="HR_Pilot_index">HR_Pilot_index</option>
+            )}
           </select>
 
-          {/* Clear Chat */}
-          <button
-            onClick={clearChat}
-            className="p-2 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-            title="Clear chat"
-          >
+          <button onClick={clearChat} className="p-2 rounded-lg hover:bg-accent" title="Clear chat">
             <Trash2 className="h-5 w-5" />
           </button>
         </div>
       </div>
 
-      {/* Messages Container */}
       <div className="flex-1 overflow-y-auto rounded-xl border border-border bg-card">
         {messages.length === 0 ? (
           <div className="h-full flex items-center justify-center text-muted-foreground">
             <div className="text-center">
               <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>Start a conversation by typing a message below</p>
-              <p className="text-sm mt-1">
-                Ask questions about your documents and policies
-              </p>
+              <p className="text-sm mt-1">Ask questions about HR policies, benefits, remote work, etc.</p>
             </div>
           </div>
         ) : (
           <div className="p-4 space-y-4">
             {messages.map((message, idx) => (
-              <div
-                key={idx}
-                className={`flex gap-3 ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
+              <div key={idx} className={`flex gap-3 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                 {message.role === "assistant" && (
                   <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                     <Bot className="h-4 w-4 text-primary" />
                   </div>
                 )}
-
-                <div
-                  className={`max-w-[70%] rounded-2xl px-4 py-3 ${
-                    message.role === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-accent"
-                  }`}
-                >
+                <div className={`max-w-[70%] rounded-2xl px-4 py-3 ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-accent"}`}>
                   <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                  <p
-                    className={`text-xs mt-1 ${
-                      message.role === "user"
-                        ? "text-primary-foreground/70"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    {message.timestamp.toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                  {message.sources && message.sources.length > 0 && (
+                    <p className="text-xs mt-2 text-muted-foreground">
+                      Sources: {message.sources.map(s => s.title).join(", ")}
+                    </p>
+                  )}
+                  <p className={`text-xs mt-1 ${message.role === "user" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                    {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </p>
                 </div>
-
                 {message.role === "user" && (
                   <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
-                    <User className="h-4 w-4 text-secondary-foreground" />
+                    <User className="h-4 w-4" />
                   </div>
                 )}
               </div>
             ))}
-
             {loading && (
               <div className="flex gap-3 justify-start">
                 <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
                   <Bot className="h-4 w-4 text-primary" />
                 </div>
                 <div className="bg-accent rounded-2xl px-4 py-3">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  <Loader2 className="h-5 w-5 animate-spin" />
                 </div>
               </div>
             )}
-
             <div ref={messagesEndRef} />
           </div>
         )}
       </div>
 
-      {/* Input Area */}
       <div className="mt-4 flex gap-3">
         <textarea
           value={input}
@@ -212,13 +211,9 @@ export function ChatInterface() {
         <button
           onClick={handleSend}
           disabled={loading || !input.trim()}
-          className="px-4 py-3 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="px-4 py-3 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
-          {loading ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <Send className="h-5 w-5" />
-          )}
+          {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
         </button>
       </div>
     </div>

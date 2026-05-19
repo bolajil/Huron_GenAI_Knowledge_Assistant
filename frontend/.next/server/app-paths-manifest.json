@@ -1,9 +1,5 @@
 {
-  "/dashboard/admin/departments/page": "app/dashboard/admin/departments/page.js",
-  "/dashboard/admin/users/page": "app/dashboard/admin/users/page.js",
-  "/dashboard/admin/security/page": "app/dashboard/admin/security/page.js",
-  "/dashboard/admin/notifications/page": "app/dashboard/admin/notifications/page.js",
-  "/dashboard/admin/storage/page": "app/dashboard/admin/storage/page.js",
-  "/dashboard/page": "app/dashboard/page.js",
-  "/dashboard/chat/page": "app/dashboard/chat/page.js"
+  "/page": "app/page.js",
+  "/mfa/page": "app/mfa/page.js",
+  "/dashboard/page": "app/dashboard/page.js"
 }

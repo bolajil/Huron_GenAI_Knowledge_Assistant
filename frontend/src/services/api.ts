@@ -12,7 +12,7 @@ export interface User {
   email: string;
   full_name: string;
   department: string;
-  role: string;
+  role: "admin" | "power_user" | "user" | "viewer";
   permissions: string[];
 }
 
@@ -184,6 +184,30 @@ export const api = {
 
     if (!response.ok) {
       throw new Error("Failed to fetch stats");
+    }
+
+    return response.json();
+  },
+
+    // ============== Indexes ==============
+  
+  async getIndexes(): Promise<{
+    status: string;
+    count: number;
+    indexes: Array<{
+      name: string;
+      type: string;
+      documents: number;
+      size_mb: number;
+      status: string;
+    }>;
+  }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/indexes`, {
+      headers: getAuthHeader(),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch indexes");
     }
 
     return response.json();

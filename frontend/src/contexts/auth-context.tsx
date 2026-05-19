@@ -3,6 +3,8 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export interface User {
   id: string;
   username: string;
@@ -32,30 +34,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    // Check for existing session on mount
     const checkAuth = async () => {
       try {
         const token = localStorage.getItem("auth_token");
         const savedUser = localStorage.getItem("user");
 
         if (token && savedUser) {
-          // Validate token with backend
-          const response = await fetch("/api/v1/auth/validate", {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+          // Validate token with Huron backend
+          const response = await fetch(`${API_BASE_URL}/api/v1/auth/validate`, {
+            headers: { Authorization: `Bearer ${token}` },
           });
 
           if (response.ok) {
             setUser(JSON.parse(savedUser));
           } else {
-            // Token invalid, clear storage
             localStorage.removeItem("auth_token");
             localStorage.removeItem("user");
           }
         }
       } catch (error) {
         console.error("Auth check failed:", error);
+        // On error, check if we have valid local data
+        const savedUser = localStorage.getItem("user");
+        if (savedUser) {
+          setUser(JSON.parse(savedUser));
+        }
       } finally {
         setIsLoading(false);
       }
