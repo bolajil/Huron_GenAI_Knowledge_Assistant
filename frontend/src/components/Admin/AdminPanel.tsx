@@ -65,7 +65,7 @@ export function AdminPanel() {
       }
 
       if (activeTab === "users") {
-        const usersData = await api.getUsers();
+        const usersData = await api.rootListAllUsers();
         setUsers(usersData.users || []);
       }
     } catch (err) {

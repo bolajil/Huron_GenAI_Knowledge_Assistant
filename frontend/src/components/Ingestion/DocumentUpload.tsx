@@ -101,7 +101,7 @@ export function DocumentUpload() {
       setFiles((prev) =>
         prev.map((f, i) =>
           i === index
-            ? { ...f, status: "success" as const, message: response.message }
+            ? { ...f, status: "success" as const, message: response.status }
             : f
         )
       );
