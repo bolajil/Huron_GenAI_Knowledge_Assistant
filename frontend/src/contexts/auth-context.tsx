@@ -2,6 +2,8 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { api } from "../services/api";
+import type { UserRole } from "../services/api";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -11,8 +13,9 @@ export interface User {
   email: string;
   full_name: string;
   department: string;
-  role: "admin" | "power_user" | "user" | "viewer";
+  role: UserRole;
   permissions: string[];
+  namespace_scope?: string[];
   avatar?: string;
 }
 
@@ -21,9 +24,11 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (token: string, user: User) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
   hasRole: (roles: string[]) => boolean;
+  isRoot: () => boolean;
+  isDeptAdmin: () => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -40,7 +45,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const savedUser = localStorage.getItem("user");
 
         if (token && savedUser) {
-          // Validate token with Huron backend
           const response = await fetch(`${API_BASE_URL}/api/v1/auth/validate`, {
             headers: { Authorization: `Bearer ${token}` },
           });
@@ -50,11 +54,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             localStorage.removeItem("auth_token");
             localStorage.removeItem("user");
+            localStorage.removeItem("mfa_verified");
           }
         }
-      } catch (error) {
-        console.error("Auth check failed:", error);
-        // On error, check if we have valid local data
+      } catch {
         const savedUser = localStorage.getItem("user");
         if (savedUser) {
           setUser(JSON.parse(savedUser));
@@ -73,16 +76,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(userData);
   };
 
-  const logout = () => {
-    localStorage.removeItem("auth_token");
-    localStorage.removeItem("user");
+  const logout = async () => {
+    await api.logout();
     setUser(null);
     router.push("/");
   };
 
   const hasPermission = (permission: string): boolean => {
     if (!user) return false;
-    if (user.role === "admin") return true;
+    if (user.role === "root") return true;
     return user.permissions.includes(permission);
   };
 
@@ -90,6 +92,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user) return false;
     return roles.includes(user.role);
   };
+
+  const isRoot = () => user?.role === "root";
+
+  const isDeptAdmin = () =>
+    user?.role === "root" || user?.role === "dept_admin";
 
   return (
     <AuthContext.Provider
@@ -101,6 +108,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         hasPermission,
         hasRole,
+        isRoot,
+        isDeptAdmin,
       }}
     >
       {children}
