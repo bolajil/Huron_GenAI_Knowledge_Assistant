@@ -42,10 +42,10 @@ function timeAgo(timestamp: string): string {
 }
 
 export default function AccessRequestsPage() {
-  const { isDeptAdmin } = useAuth();
+  const { user, isDeptAdmin } = useAuth();
 
   const [requests, setRequests] = useState<AccessRequest[]>([]);
-  const [tabs, setTabs] = useState<string[]>([]);
+  const [tabs, setTabs] = useState<Array<{ tab: string; label: string; currently_accessible: boolean }>>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
@@ -54,7 +54,7 @@ export default function AccessRequestsPage() {
   // Submit form state
   const [showSubmit, setShowSubmit] = useState(false);
   const [selectedTab, setSelectedTab] = useState("");
-  const [reason, setReason] = useState("");
+  const [justification, setJustification] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState("");
 
@@ -66,7 +66,7 @@ export default function AccessRequestsPage() {
         api.listRequestableTabs(),
       ]);
       setRequests(reqRes.requests ?? []);
-      setTabs(tabsRes.tabs ?? []);
+      setTabs(tabsRes.tabs ?? [] as typeof tabs);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load requests");
     } finally {
@@ -80,14 +80,18 @@ export default function AccessRequestsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedTab || !reason.trim()) return;
+    if (!selectedTab || !justification.trim()) return;
     setSubmitting(true);
     setError("");
     try {
-      await api.submitAccessRequest(selectedTab, reason.trim());
+      await api.submitAccessRequest(
+        selectedTab,
+        justification.trim(),
+        user?.department ?? "general"
+      );
       setSubmitSuccess(`Request for "${selectedTab}" submitted successfully.`);
       setSelectedTab("");
-      setReason("");
+      setJustification("");
       setShowSubmit(false);
       await fetchRequests();
       setTimeout(() => setSubmitSuccess(""), 4000);
@@ -172,8 +176,8 @@ export default function AccessRequestsPage() {
               >
                 <option value="">Select a tab…</option>
                 {tabs.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
+                  <option key={t.tab} value={t.tab}>
+                    {t.label}{t.currently_accessible ? "" : " (requires approval)"}
                   </option>
                 ))}
               </select>
@@ -187,8 +191,8 @@ export default function AccessRequestsPage() {
                 type="text"
                 required
                 placeholder="Brief business justification…"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                value={justification}
+                onChange={(e) => setJustification(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
               />
             </div>
@@ -197,14 +201,14 @@ export default function AccessRequestsPage() {
           <div className="flex gap-3 justify-end">
             <button
               type="button"
-              onClick={() => { setShowSubmit(false); setSelectedTab(""); setReason(""); }}
+              onClick={() => { setShowSubmit(false); setSelectedTab(""); setJustification(""); }}
               className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={submitting || !selectedTab || !reason.trim()}
+              disabled={submitting || !selectedTab || !justification.trim()}
               className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
             >
               {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -263,14 +267,14 @@ export default function AccessRequestsPage() {
             <tbody className="divide-y divide-border">
               {requests.map((req) => (
                 <tr key={req.id} className="hover:bg-accent/30 transition-colors">
-                  <td className="px-4 py-3 font-medium">{req.username}</td>
+                  <td className="px-4 py-3 font-medium">{req.requester_name}</td>
                   <td className="px-4 py-3">
                     <span className="px-2 py-0.5 rounded bg-primary/10 text-primary text-xs">
                       {req.requested_tab}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground max-w-xs truncate">
-                    {req.reason}
+                    {req.justification}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={req.status} />
@@ -306,7 +310,7 @@ export default function AccessRequestsPage() {
                       )}
                       {req.status !== "pending" && (
                         <span className="text-xs text-muted-foreground">
-                          by {req.reviewed_by ?? "—"}
+                          by {req.reviewer_name ?? "—"}
                         </span>
                       )}
                     </td>

@@ -75,13 +75,16 @@ export interface CreateUserPayload {
 
 export interface AccessRequest {
   id: number;
-  user_id: number;
-  username: string;
+  requester_id: number;
+  requester_name: string;
+  requester_email: string;
+  dept_code: string;
   requested_tab: string;
-  reason: string;
+  requested_role: string;
+  justification: string;
   status: "pending" | "approved" | "rejected";
   created_at: string;
-  reviewed_by?: string;
+  reviewer_name?: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -198,26 +201,31 @@ export const api = {
   // ── Stats ────────────────────────────────────────────────────────────────────
 
   async getStats(): Promise<StatsResponse> {
-    return request("/api/v1/stats");
+    return request("/api/v1/admin/stats");
   },
 
   async getRecentQueries(limit = 10): Promise<{ queries: RecentQuery[] }> {
-    return request(`/api/v1/stats/recent-queries?limit=${limit}`);
+    return request(`/api/v1/admin/stats/recent-queries?limit=${limit}`);
   },
 
   // ── Access requests ──────────────────────────────────────────────────────────
 
-  async listRequestableTabs(): Promise<{ tabs: string[] }> {
+  async listRequestableTabs(): Promise<{
+    tabs: Array<{ tab: string; label: string; description: string; currently_accessible: boolean }>;
+    user_role: string;
+  }> {
     return request("/api/v1/access-requests/tabs");
   },
 
   async submitAccessRequest(
     requested_tab: string,
-    reason: string
+    justification: string,
+    dept_code: string,
+    requested_role = "user"
   ): Promise<{ status: string; request_id: number }> {
     return request("/api/v1/access-requests", {
       method: "POST",
-      body: JSON.stringify({ requested_tab, reason }),
+      body: JSON.stringify({ requested_tab, justification, dept_code, requested_role }),
     });
   },
 
@@ -232,9 +240,9 @@ export const api = {
     requestId: number,
     action: "approve" | "reject"
   ): Promise<{ status: string }> {
-    return request(`/api/v1/access-requests/${requestId}/review`, {
+    return request("/api/v1/access-requests/review", {
       method: "POST",
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ request_id: requestId, action }),
     });
   },
 
