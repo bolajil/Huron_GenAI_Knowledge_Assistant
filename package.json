@@ -1,8 +1,0 @@
-{
-  "dependencies": {
-    "@fortawesome/fontawesome-svg-core": "^7.0.0",
-    "@fortawesome/free-solid-svg-icons": "^7.0.0",
-    "express-rate-limit": "^8.0.1",
-    "nodemailer": "^7.0.5"
-  }
-}

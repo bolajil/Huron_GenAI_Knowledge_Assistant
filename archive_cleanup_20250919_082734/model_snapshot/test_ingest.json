@@ -1,8 +1,0 @@
-{
-  "documents": [
-    {
-      "content": "The ingestion module allows indexing new documents.",
-      "metadata": { "source": "manual_test" }
-    }
-  ]
-}

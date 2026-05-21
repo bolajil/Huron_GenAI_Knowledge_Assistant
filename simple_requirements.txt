@@ -1,8 +1,0 @@
-streamlit==1.31.0
-python-dotenv==1.0.0
-requests==2.31.0
-langchain==0.0.305
-langchain-community==0.0.8
-faiss-cpu==1.7.4
-pydantic==2.5.0
-beautifulsoup4==4.12.3

@@ -1,7 +1,0 @@
-{
-  "backup_type": "configuration",
-  "timestamp": "20251112_121655",
-  "local_path": "backups\\config_20251112_121655.tar.gz",
-  "s3_path": null,
-  "size_mb": 0.03
-}
