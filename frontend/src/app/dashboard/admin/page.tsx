@@ -225,8 +225,8 @@ export default function AdminPage() {
                 >
                   <option value="">Select department…</option>
                   {departments.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
+                    <option key={d.code} value={d.code}>
+                      {d.display_name}
                     </option>
                   ))}
                 </select>

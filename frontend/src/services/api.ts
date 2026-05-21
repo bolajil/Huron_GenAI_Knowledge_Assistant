@@ -58,9 +58,11 @@ export interface RecentQuery {
 }
 
 export interface Department {
-  id: string;
-  name: string;
+  id: number;
+  code: string;
+  display_name: string;
   namespace: string;
+  classification?: string;
   user_count?: number;
 }
 
