@@ -39,7 +39,7 @@ interface CreateUserForm {
   full_name: string;
   password: string;
   role: UserRole;
-  department_id: string;
+  department: string;
 }
 
 const EMPTY_FORM: CreateUserForm = {
@@ -48,7 +48,7 @@ const EMPTY_FORM: CreateUserForm = {
   full_name: "",
   password: "",
   role: "user",
-  department_id: "",
+  department: "",
 };
 
 export default function AdminPage() {
@@ -94,7 +94,7 @@ export default function AdminPage() {
     try {
       const payload: CreateUserPayload = {
         ...form,
-        department_id: form.department_id || currentUser?.department || "",
+        department: form.department || currentUser?.department || "",
       };
       if (isRoot()) {
         await api.rootCreateUser(payload);
@@ -218,8 +218,8 @@ export default function AdminPage() {
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Department</label>
                 <select
-                  value={form.department_id}
-                  onChange={(e) => setForm({ ...form, department_id: e.target.value })}
+                  value={form.department}
+                  onChange={(e) => setForm({ ...form, department: e.target.value })}
                   required
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                 >
