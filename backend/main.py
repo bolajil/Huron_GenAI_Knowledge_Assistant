@@ -991,10 +991,17 @@ async def get_stats(payload: dict = Depends(current_user)):
     except Exception as e:
         pinecone_stats = {"status": "unavailable", "error": str(e)}
 
+    with db_conn() as conn:
+        dept_count = conn.execute(
+            "SELECT COUNT(*) FROM departments WHERE is_active=1"
+        ).fetchone()[0]
+
     return {
         "total_documents": int(total_docs or 0),
         "queries_today": int(queries_today or 0),
         "active_users": int(total_users or 0),
+        "total_users": int(total_users or 0),
+        "departments": int(dept_count or 0),
         "avg_response_time": round((avg_rt or 0) / 1000, 2),
         "avg_faithfulness": round(avg_faith or 0, 2),
         "pinecone": pinecone_stats,

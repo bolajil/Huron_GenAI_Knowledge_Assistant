@@ -75,7 +75,8 @@ export default function MFAPage() {
       const pendingToken = localStorage.getItem("pending_auth_token");
       const pendingUser = localStorage.getItem("pending_user");
 
-      const response = await fetch("http://localhost:8000/api/v1/auth/mfa/verify", {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const response = await fetch(`${API_BASE}/api/v1/auth/mfa/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, pending_token: pendingToken }),
