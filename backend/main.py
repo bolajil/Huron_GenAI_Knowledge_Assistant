@@ -11,7 +11,7 @@ All frontend/backend integration gaps fixed:
 
 from __future__ import annotations
 
-import os, sys, sqlite3, logging, secrets, time
+import asyncio, os, sys, sqlite3, logging, secrets, time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -33,6 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))  # makes agent/ importable
 
 # ─── App ─────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Huron GenAI API", version="4.0.0")
@@ -179,10 +180,36 @@ def _seed_db():
         conn.commit()
 
 
+def _ensure_pg_agent_runs_table():
+    """Create agent_runs table in PostgreSQL if missing."""
+    try:
+        conn = _DBConn()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                id                  TEXT PRIMARY KEY,
+                user_id             INTEGER,
+                dept                TEXT,
+                query               TEXT,
+                status              TEXT DEFAULT 'running',
+                steps               TEXT,
+                final_answer        TEXT,
+                namespaces_accessed TEXT,
+                steps_taken         INTEGER DEFAULT 0,
+                model               TEXT,
+                created_at          TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logger.warning("Could not ensure agent_runs table: %s", exc)
+
+
 def init_db():
     if DATABASE_URL:
         _seed_db()
         _ensure_pg_feedback_table()
+        _ensure_pg_agent_runs_table()
         return
 
     conn = sqlite3.connect(DB_PATH)
@@ -283,10 +310,27 @@ def init_db():
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            id                  TEXT PRIMARY KEY,
+            user_id             INTEGER REFERENCES users(id),
+            dept                TEXT,
+            query               TEXT,
+            status              TEXT DEFAULT 'running',
+            steps               TEXT,
+            final_answer        TEXT,
+            namespaces_accessed TEXT,
+            steps_taken         INTEGER DEFAULT 0,
+            model               TEXT,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     conn.close()
     _seed_db()
     _ensure_pg_feedback_table()
+    _ensure_pg_agent_runs_table()
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -339,12 +383,12 @@ def log_query(uid: int, dept: str, text: str, ms: int, faith: float, srcs: int):
 ROLE_CLEARANCE = {"root": 5, "dept_admin": 4, "power_user": 3, "user": 2, "viewer": 1}
 
 ROLE_PERMISSIONS: dict[str, list[str]] = {
-    "root":       ["query","chat","ingest","research","agent","admin","manage_users",
-                   "manage_departments","manage_all_depts","create_dept_admin",
+    "root":       ["query","chat","ingest","research","agent","cross_dept_query","admin",
+                   "manage_users","manage_departments","manage_all_depts","create_dept_admin",
                    "approve_requests","view_audit_log","mcp","analytics"],
     "dept_admin": ["query","chat","ingest","research","agent","manage_users",
                    "manage_dept_users","approve_requests","analytics","mcp"],
-    "power_user": ["query","chat","ingest","research","agent","analytics"],
+    "power_user": ["query","chat","ingest","research","agent","cross_dept_query","analytics"],
     "user":       ["query","chat","ingest"],
     "viewer":     ["query","chat"],
 }
@@ -535,6 +579,18 @@ class FeedbackRequest(BaseModel):
     source:    str = "rag"  # "rag" | "general_knowledge"
     dept_code: str = "general"
     comment:   Optional[str] = None
+
+
+class AgentRunRequest(BaseModel):
+    query:     str
+    dept:      Optional[str] = None
+    model:     str = "gpt-4o-mini"
+    max_steps: int = 12
+
+
+# In-memory stores for active agent runs (replace with Redis for multi-worker)
+_active_runs: dict = {}   # run_id → ReActAgent
+_run_steps:   dict = {}   # run_id → list[dict]
 
 
 # ─── Startup ─────────────────────────────────────────────────────────────────
@@ -1180,7 +1236,10 @@ DEPT_LABELS = {
 }
 
 
-async def _llm_direct(messages: list[dict], dept: str) -> dict:
+_DEPTH_TOKENS = {3: 350, 5: 600, 10: 900, 15: 1300, 20: 1600}
+
+
+async def _llm_direct(messages: list[dict], dept: str, top_k: int = 5) -> dict:
     """Call OpenAI directly — fallback when RAG pipeline or documents are unavailable."""
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
@@ -1216,7 +1275,7 @@ async def _llm_direct(messages: list[dict], dept: str) -> dict:
         resp = await client.chat.completions.create(
             model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
             messages=conv,
-            max_tokens=1024,
+            max_tokens=_DEPTH_TOKENS.get(top_k, 600),
             temperature=0.7,
         )
         answer = resp.choices[0].message.content or ""
@@ -1252,7 +1311,7 @@ async def query_endpoint(req: QueryRequest, p: dict = Depends(current_user)):
 
     rag = get_rag()
     if not rag:
-        fb = await _llm_direct([{"role": "user", "content": req.query}], dept)
+        fb = await _llm_direct([{"role": "user", "content": req.query}], dept, req.top_k)
         log_query(p.get("user_id", 0), dept, req.query, 0, 0, 0)
         return {
             "status":  fb["status"],
@@ -1400,6 +1459,163 @@ async def list_indexes(p: dict = Depends(current_user)):
         for r in rows
     ]
     return {"status": "success", "count": len(indexes), "indexes": indexes}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# AGENT
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/v1/agent/run")
+async def agent_run(req: AgentRunRequest, p: dict = Depends(current_user)):
+    perm(p, "agent")
+    dept = req.dept or p.get("dept_id", "general")
+    dept_gate(p, dept)
+
+    import uuid
+    run_id = str(uuid.uuid4())
+
+    # Build TenantContext from JWT claims
+    class _Ctx:
+        def __init__(self, payload: dict):
+            self.dept_id         = payload.get("dept_id", "general")
+            self.namespace_scope = payload.get("namespace_scope", [self.dept_id])
+            self.permissions     = payload.get("permissions", [])
+            self.role            = payload.get("role", "user")
+
+    ctx = _Ctx(p)
+
+    # Persist run record
+    with db_conn() as conn:
+        conn.execute(
+            "INSERT INTO agent_runs (id,user_id,dept,query,status,model) VALUES (?,?,?,?,?,?)",
+            (run_id, p.get("user_id"), dept, req.query, "running", req.model),
+        )
+        conn.commit()
+
+    # Import here to avoid circular at module load
+    from agent.react_agent import ReActAgent
+
+    agent = ReActAgent(ctx, run_id, max_steps=req.max_steps, model=req.model)
+    _active_runs[run_id] = agent
+    _run_steps[run_id]   = []
+
+    async def _run():
+        try:
+            async for step in agent.run(req.query):
+                _run_steps[run_id].append(step)
+            final = next(
+                (s for s in reversed(_run_steps[run_id]) if s["type"] == "complete"), {}
+            )
+            with db_conn() as conn:
+                import json as _json
+                conn.execute(
+                    "UPDATE agent_runs SET status=?,final_answer=?,steps=?,"
+                    "namespaces_accessed=?,steps_taken=? WHERE id=?",
+                    (
+                        "complete",
+                        final.get("answer", ""),
+                        _json.dumps(_run_steps[run_id]),
+                        _json.dumps(final.get("namespaces_accessed", [])),
+                        final.get("steps_taken", 0),
+                        run_id,
+                    ),
+                )
+                conn.commit()
+            write_audit(
+                p.get("user_id"), p.get("sub"), "agent_run", dept,
+                detail=f"run_id={run_id} steps={final.get('steps_taken', 0)}",
+            )
+        except Exception as e:
+            _run_steps[run_id].append({"type": "error", "message": str(e)})
+            with db_conn() as conn:
+                conn.execute("UPDATE agent_runs SET status=? WHERE id=?", ("error", run_id))
+                conn.commit()
+
+    asyncio.create_task(_run())
+    return {"run_id": run_id, "status": "running", "dept": dept}
+
+
+@app.get("/api/v1/agent/stream/{run_id}")
+async def agent_stream(run_id: str, request: Request, token: Optional[str] = None):
+    """
+    SSE endpoint — streams agent steps as they are produced.
+    Auth: reads token from query param (?token=...) because EventSource
+    does not support custom headers.
+    """
+    import json as _json
+
+    # Resolve token from query param (SSE) or Authorization header
+    raw_token = token
+    if not raw_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header[7:]
+
+    p = verify_token(raw_token or "")
+    if not p:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Verify run belongs to requesting user (or root)
+    with db_conn() as conn:
+        row = conn.execute(
+            "SELECT user_id, status FROM agent_runs WHERE id=?", (run_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if row["user_id"] != p.get("user_id") and p.get("role") != "root":
+        raise HTTPException(status_code=403, detail="Not your run")
+
+    async def event_stream():
+        sent      = 0
+        polls     = 0
+        max_polls = 600   # 5-min timeout at 0.5s intervals
+        while polls < max_polls:
+            steps = _run_steps.get(run_id, [])
+            while sent < len(steps):
+                step = steps[sent]
+                yield f"event: step\ndata: {_json.dumps(step)}\n\n"
+                sent += 1
+                if step["type"] in ("complete", "error"):
+                    return
+            await asyncio.sleep(0.5)
+            polls += 1
+        yield f'event: timeout\ndata: {{"message":"Stream timeout"}}\n\n'
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/v1/agent/stop/{run_id}")
+async def agent_stop(run_id: str, p: dict = Depends(current_user)):
+    agent = _active_runs.get(run_id)
+    if agent:
+        agent.stop()
+        with db_conn() as conn:
+            conn.execute("UPDATE agent_runs SET status=? WHERE id=?", ("stopped", run_id))
+            conn.commit()
+    return {"status": "stopped", "run_id": run_id}
+
+
+@app.get("/api/v1/agent/runs")
+async def list_agent_runs(limit: int = 20, p: dict = Depends(current_user)):
+    with db_conn() as conn:
+        if p.get("role") == "root":
+            rows = conn.execute(
+                "SELECT id,user_id,dept,query,status,steps_taken,model,created_at "
+                "FROM agent_runs ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id,user_id,dept,query,status,steps_taken,model,created_at "
+                "FROM agent_runs WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+                (p.get("user_id"), limit),
+            ).fetchall()
+    return {"runs": [dict(r) for r in rows]}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
