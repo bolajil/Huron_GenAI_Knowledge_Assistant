@@ -1,16 +1,0 @@
-Paper Capture Plug-in
-
-rdf:Description rdf:about
-
-Paper Capture Plug-in
-
-ff:
-endstreamendobj
-
-OJ
-endstreamendobj
-
-endstr
-endstreamendobj
-
-endstreamendobjstartxref

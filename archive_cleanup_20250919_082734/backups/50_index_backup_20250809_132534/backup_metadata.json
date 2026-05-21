@@ -1,7 +1,0 @@
-{
-  "original_index": "50_index",
-  "backup_timestamp": "2025-08-09T13:25:34.746294",
-  "backup_path": "data\\backups\\50_index_backup_20250809_132534",
-  "source_path": "data\\faiss_index\\50_index",
-  "backup_size": "70.6 KB"
-}
