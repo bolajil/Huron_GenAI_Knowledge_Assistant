@@ -75,6 +75,14 @@ export interface CreateUserPayload {
   department: string;
 }
 
+export interface IndexInfo {
+  name: string;
+  namespace: string;
+  vector_count: number;
+  dimension: number;
+  department?: string;
+}
+
 export interface AccessRequest {
   id: number;
   requester_id: number;
@@ -205,6 +213,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+
+  // ── Departments & Indexes ────────────────────────────────────────────────────
+
+  async getDepartments(): Promise<{ departments: Department[] }> {
+    return request("/api/v1/admin/departments");
+  },
+
+  async getIndexes(): Promise<{ indexes: IndexInfo[] }> {
+    return request("/api/v1/indexes");
   },
 
   // ── Stats ────────────────────────────────────────────────────────────────────

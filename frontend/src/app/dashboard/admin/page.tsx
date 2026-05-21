@@ -10,6 +10,7 @@ import {
   Building2,
   UserX,
   UserCheck,
+  Trash2,
   Loader2,
 } from "lucide-react";
 import { useAuth } from "../../../contexts/auth-context";
@@ -119,6 +120,16 @@ export default function AdminPage() {
       await fetchData();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed");
+    }
+  };
+
+  const handleDelete = async (u: User) => {
+    if (!confirm(`Permanently delete "${u.full_name}" (${u.username})? This cannot be undone.`)) return;
+    try {
+      await api.rootDeleteUser(Number(u.id));
+      await fetchData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
     }
   };
 
@@ -309,18 +320,29 @@ export default function AdminPage() {
                     </td>
                   )}
                   <td className="px-4 py-3 text-right">
-                    {u.id !== currentUser?.id && u.role !== "root" && (
-                      <button
-                        onClick={() => handleToggleActive(u)}
-                        title="Deactivate user"
-                        className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
-                      >
-                        <UserX className="w-4 h-4" />
-                      </button>
-                    )}
-                    {u.id === currentUser?.id && (
-                      <UserCheck className="w-4 h-4 text-green-500 inline" />
-                    )}
+                    <div className="flex items-center justify-end gap-1">
+                      {u.id !== currentUser?.id && u.role !== "root" && (
+                        <button
+                          onClick={() => handleToggleActive(u)}
+                          title="Deactivate user"
+                          className="p-1.5 rounded hover:bg-orange-500/10 text-muted-foreground hover:text-orange-500 transition-colors"
+                        >
+                          <UserX className="w-4 h-4" />
+                        </button>
+                      )}
+                      {isRoot() && u.id !== currentUser?.id && u.role !== "root" && (
+                        <button
+                          onClick={() => handleDelete(u)}
+                          title="Delete user permanently"
+                          className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-600 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                      {u.id === currentUser?.id && (
+                        <UserCheck className="w-4 h-4 text-green-500" />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
