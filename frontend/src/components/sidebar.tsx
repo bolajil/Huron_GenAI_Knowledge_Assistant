@@ -168,7 +168,7 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
             >
               {ROLE_LABEL[role] ?? role}
             </span>
-            <span className="text-xs text-muted-foreground truncate">{user.username}</span>
+            <span className="text-xs text-muted-foreground truncate">{user.full_name || user.username}</span>
           </div>
           {!isRoot() && (
             <p className="text-xs text-muted-foreground mt-0.5 truncate">

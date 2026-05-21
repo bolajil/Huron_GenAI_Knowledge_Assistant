@@ -314,6 +314,21 @@ export const api = {
     return response.json();
   },
 
+  // ── Feedback ─────────────────────────────────────────────────────────────────
+
+  async submitFeedback(payload: {
+    query: string;
+    response: string;
+    rating: 1 | -1;
+    source: string;
+    dept_code: string;
+  }): Promise<{ status: string }> {
+    return request("/api/v1/feedback", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   // ── Health ───────────────────────────────────────────────────────────────────
 
   async healthCheck(): Promise<{ status: string }> {
