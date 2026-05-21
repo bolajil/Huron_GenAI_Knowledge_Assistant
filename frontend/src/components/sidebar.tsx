@@ -50,32 +50,14 @@ const ROLE_COLOR: Record<UserRole, string> = {
   viewer:     "bg-gray-500/15 text-gray-500",
 };
 
-const mainNav = [
-  { name: "Dashboard",        href: "/dashboard",           icon: Home },
-  { name: "Chat Assistant",   href: "/dashboard/chat",      icon: MessageSquare },
-  { name: "Query Assistant",  href: "/dashboard/query",     icon: Search },
-  { name: "Agent Assistant",  href: "/dashboard/agent",     icon: Bot },
-  { name: "Enhanced Research",href: "/dashboard/research",  icon: Microscope },
-  { name: "Document Ingest",  href: "/dashboard/ingest",    icon: FileUp },
-  { name: "Index Management", href: "/dashboard/indexes",   icon: Database },
-  { name: "Analytics",        href: "/dashboard/analytics", icon: BarChart3 },
-];
-
-const toolsNav = [
-  { name: "System Monitoring", href: "/dashboard/monitoring", icon: Activity },
-  { name: "MCP Dashboard",     href: "/dashboard/mcp",        icon: Plug },
-  { name: "Feedback Analytics",href: "/dashboard/feedback",   icon: ThumbsUp },
-];
-
-const adminNav = [
-  { name: "Admin Panel",       href: "/dashboard/admin",                          icon: Settings },
-  { name: "Departments",       href: "/dashboard/admin/departments",               icon: Building2 },
-  { name: "Users",             href: "/dashboard/admin/users",                    icon: Users },
-  { name: "Access Requests",   href: "/dashboard/admin/access-requests",          icon: ClipboardList },
-  { name: "Security",          href: "/dashboard/admin/security",                 icon: Shield },
-  { name: "Notifications",     href: "/dashboard/admin/notifications",            icon: Bell },
-  { name: "Storage",           href: "/dashboard/admin/storage",                  icon: HardDrive },
-];
+type RoleLevel = 1 | 2 | 3 | 4 | 5;
+const ROLE_LEVEL: Record<UserRole, RoleLevel> = {
+  viewer:     1,
+  user:       2,
+  power_user: 3,
+  dept_admin: 4,
+  root:       5,
+};
 
 function NavLink({
   href,
@@ -108,12 +90,48 @@ function NavLink({
 
 export function Sidebar({ open, setOpen }: SidebarProps) {
   const pathname = usePathname();
-  const { user, isDeptAdmin } = useAuth();
+  const { user, isRoot, isDeptAdmin } = useAuth();
+
+  const role = user?.role ?? "viewer";
+  const level = ROLE_LEVEL[role] ?? 1;
 
   const isActive = (href: string) =>
     href === "/dashboard"
       ? pathname === href
       : pathname === href || pathname?.startsWith(href + "/");
+
+  // ── Main nav — visible by minimum role level ────────────────────────────
+  const mainNav = [
+    { name: "Dashboard",         href: "/dashboard",          icon: Home,       minLevel: 1 },
+    { name: "Chat Assistant",    href: "/dashboard/chat",     icon: MessageSquare, minLevel: 2 },
+    { name: "Query Assistant",   href: "/dashboard/query",    icon: Search,     minLevel: 1 },
+    { name: "Agent Assistant",   href: "/dashboard/agent",    icon: Bot,        minLevel: 3 },
+    { name: "Enhanced Research", href: "/dashboard/research", icon: Microscope, minLevel: 3 },
+    { name: "Document Ingest",   href: "/dashboard/ingest",   icon: FileUp,     minLevel: 3 },
+    { name: "Index Management",  href: "/dashboard/indexes",  icon: Database,   minLevel: 5 },
+    { name: "Analytics",         href: "/dashboard/analytics",icon: BarChart3,  minLevel: 4 },
+  ].filter((item) => level >= item.minLevel);
+
+  // ── Tools nav ───────────────────────────────────────────────────────────
+  const toolsNav = [
+    { name: "System Monitoring", href: "/dashboard/monitoring", icon: Activity, minLevel: 4 },
+    { name: "MCP Dashboard",     href: "/dashboard/mcp",        icon: Plug,     minLevel: 5 },
+    { name: "Feedback Analytics",href: "/dashboard/feedback",   icon: ThumbsUp, minLevel: 4 },
+  ].filter((item) => level >= item.minLevel);
+
+  // ── Admin nav ───────────────────────────────────────────────────────────
+  const adminNav = [
+    { name: "Admin Panel",     href: "/dashboard/admin",                 icon: Settings,     minLevel: 4 },
+    { name: "Departments",     href: "/dashboard/admin/departments",      icon: Building2,    minLevel: 5 },
+    { name: "Users",           href: "/dashboard/admin/users",           icon: Users,        minLevel: 4 },
+    { name: "Access Requests", href: "/dashboard/admin/access-requests", icon: ClipboardList,minLevel: 1 },
+    { name: "Security",        href: "/dashboard/admin/security",        icon: Shield,       minLevel: 5 },
+    { name: "Notifications",   href: "/dashboard/admin/notifications",   icon: Bell,         minLevel: 4 },
+    { name: "Storage",         href: "/dashboard/admin/storage",         icon: HardDrive,    minLevel: 5 },
+  ].filter((item) => level >= item.minLevel);
+
+  const showTools = toolsNav.length > 0;
+  const showAdmin = adminNav.length > 0;
 
   return (
     <nav
@@ -137,21 +155,26 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
         </div>
       </div>
 
-      {/* Role badge (visible only when expanded) */}
+      {/* Role badge */}
       {open && user && (
         <div className="px-4 py-2 border-b border-border">
           <div className="flex items-center gap-2">
-            {user.role === "root" && <Crown className="w-3.5 h-3.5 text-red-500 shrink-0" />}
+            {isRoot() && <Crown className="w-3.5 h-3.5 text-red-500 shrink-0" />}
             <span
               className={cn(
                 "text-xs px-2 py-0.5 rounded-full font-medium",
-                ROLE_COLOR[user.role] ?? ROLE_COLOR.viewer
+                ROLE_COLOR[role] ?? ROLE_COLOR.viewer
               )}
             >
-              {ROLE_LABEL[user.role] ?? user.role}
+              {ROLE_LABEL[role] ?? role}
             </span>
             <span className="text-xs text-muted-foreground truncate">{user.username}</span>
           </div>
+          {!isRoot() && (
+            <p className="text-xs text-muted-foreground mt-0.5 truncate">
+              Dept: {user.department}
+            </p>
+          )}
         </div>
       )}
 
@@ -166,21 +189,24 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
           <NavLink key={item.href} {...item} open={open} active={isActive(item.href)} />
         ))}
 
-        {open && (
-          <p className="px-3 pt-5 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            Tools
-          </p>
-        )}
-        {toolsNav.map((item) => (
-          <NavLink key={item.href} {...item} open={open} active={isActive(item.href)} />
-        ))}
-
-        {/* Admin section — only for dept_admin and above */}
-        {isDeptAdmin() && (
+        {showTools && (
           <>
             {open && (
               <p className="px-3 pt-5 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Admin
+                Tools
+              </p>
+            )}
+            {toolsNav.map((item) => (
+              <NavLink key={item.href} {...item} open={open} active={isActive(item.href)} />
+            ))}
+          </>
+        )}
+
+        {showAdmin && (
+          <>
+            {open && (
+              <p className="px-3 pt-5 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                {isDeptAdmin() ? "Admin" : "Account"}
               </p>
             )}
             {adminNav.map((item) => (

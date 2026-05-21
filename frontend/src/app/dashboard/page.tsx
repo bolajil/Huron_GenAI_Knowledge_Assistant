@@ -29,7 +29,7 @@ function timeAgo(timestamp: string): string {
 }
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, isRoot } = useAuth();
   const firstName = user?.full_name?.split(" ")[0] || "User";
 
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -99,7 +99,10 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-3xl font-bold">Dashboard</h1>
           <p className="text-muted-foreground mt-1">
-            Welcome back, {firstName}! Here&apos;s your Huron Knowledge Assistant overview.
+            Welcome back, {firstName}!{" "}
+            {isRoot()
+              ? "Global overview — all departments."
+              : `${user?.department?.toUpperCase()} department overview.`}
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
@@ -146,23 +149,27 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Additional stats row (total users / departments) */}
+      {/* Additional stats row */}
       {stats && (
         <div className="grid grid-cols-2 gap-4 max-w-sm">
           <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3">
             <Users className="w-4 h-4 text-muted-foreground" />
             <div>
-              <p className="text-xs text-muted-foreground">Total Users</p>
+              <p className="text-xs text-muted-foreground">
+                {isRoot() ? "Total Users" : "Dept Users"}
+              </p>
               <p className="font-semibold">{stats.total_users}</p>
             </div>
           </div>
-          <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3">
-            <Building2 className="w-4 h-4 text-muted-foreground" />
-            <div>
-              <p className="text-xs text-muted-foreground">Departments</p>
-              <p className="font-semibold">{stats.departments}</p>
+          {isRoot() && (
+            <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3">
+              <Building2 className="w-4 h-4 text-muted-foreground" />
+              <div>
+                <p className="text-xs text-muted-foreground">Departments</p>
+                <p className="font-semibold">{stats.departments}</p>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -183,7 +190,9 @@ export default function DashboardPage() {
             <p className="p-6 text-sm text-muted-foreground">No queries yet.</p>
           ) : (
             <div className="divide-y divide-border">
-              {queries.map((q) => (
+              {queries
+                .filter((q) => isRoot() || q.department === user?.department)
+                .map((q) => (
                 <div key={q.id} className="p-4 hover:bg-accent/50 transition-colors">
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0 pr-4">
