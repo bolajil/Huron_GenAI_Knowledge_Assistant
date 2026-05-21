@@ -20,11 +20,20 @@ export interface LoginResponse {
   user: User;
 }
 
+export interface SourceGuard {
+  passed: boolean;
+  score: number;
+  warning: string | null;
+}
+
 export interface QueryResponse {
   status: string;
   query: string;
   results: string;
   sources: Array<{ title: string; page?: number }>;
+  source?: "rag" | "general_knowledge" | "error";
+  source_label?: string;
+  source_guard?: SourceGuard;
 }
 
 export interface IngestResponse {
