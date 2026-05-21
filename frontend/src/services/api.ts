@@ -72,7 +72,7 @@ export interface CreateUserPayload {
   full_name: string;
   password: string;
   role: UserRole;
-  department_id: string;
+  department: string;
 }
 
 export interface AccessRequest {
@@ -107,7 +107,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new Error(err.detail || `Request failed: ${response.status}`);
+    const detail = err.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail)
+        ? detail.map((d: { msg?: string }) => d.msg ?? JSON.stringify(d)).join("; ")
+        : `Request failed: ${response.status}`;
+    throw new Error(message);
   }
   return response.json();
 }
