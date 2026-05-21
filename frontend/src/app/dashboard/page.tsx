@@ -39,15 +39,15 @@ export default function DashboardPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [statsData, queriesData] = await Promise.all([
+      const [statsData, queriesData] = await Promise.allSettled([
         api.getStats(),
         api.getRecentQueries(8),
       ]);
-      setStats(statsData);
-      setQueries(queriesData.queries ?? []);
+      if (statsData.status === "fulfilled") setStats(statsData.value);
+      if (queriesData.status === "fulfilled") setQueries(queriesData.value.queries ?? []);
       setLastRefreshed(new Date());
     } catch {
-      // silently keep stale data on refresh failure
+      // keep stale data
     } finally {
       setLoading(false);
     }
