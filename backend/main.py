@@ -61,15 +61,130 @@ TOKEN_HOURS = 8
 #   Connection pool: pool_size=20, max_overflow=40, pool_timeout=30
 #   PgBouncer in front for 20k users (transaction pooling mode).
 #
-DB_PATH = Path(__file__).parent.parent / "data" / "huron.db"
+DB_PATH      = Path(__file__).parent.parent / "data" / "huron.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-# Token blacklist — in-memory + SQLite now.
+# Token blacklist — in-memory + DB now.
 # REDIS MIGRATION: replace with redis.Redis(host=REDIS_HOST).sadd("blacklist", jti)
 _token_blacklist: set[str] = set()
 
 
+class _DBConn:
+    """Thin adapter — presents a sqlite3-like execute() interface over psycopg2 or sqlite3."""
+
+    def __init__(self):
+        if DATABASE_URL:
+            import psycopg2
+            import psycopg2.extras
+            self._raw   = psycopg2.connect(DATABASE_URL)
+            self._cur   = self._raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            self._is_pg = True
+        else:
+            self._raw   = sqlite3.connect(DB_PATH)
+            self._raw.row_factory = sqlite3.Row
+            self._is_pg = False
+
+    def execute(self, sql: str, params=()):
+        if self._is_pg:
+            sql = sql.replace("?", "%s")
+            if "INSERT OR IGNORE" in sql:
+                sql = sql.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+                sql = sql.rstrip("; ") + " ON CONFLICT DO NOTHING"
+            # Boolean column literals: PostgreSQL BOOLEAN rejects integer comparisons
+            sql = (sql
+                   .replace("is_active=1", "is_active=TRUE")
+                   .replace("is_active=0", "is_active=FALSE")
+                   .replace("is_active = 1", "is_active = TRUE")
+                   .replace("is_active = 0", "is_active = FALSE"))
+            self._cur.execute(sql, params if params else None)
+            return self._cur
+        return self._raw.execute(sql, params)
+
+    def commit(self):
+        self._raw.commit()
+
+    def close(self):
+        self._raw.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type:
+                self._raw.rollback()
+            else:
+                self._raw.commit()
+        finally:
+            self._raw.close()
+        return False
+
+
+def _ensure_pg_feedback_table():
+    """Create feedback_log in PostgreSQL if it does not exist (safe to run every startup)."""
+    if not DATABASE_URL:
+        return
+    try:
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS feedback_log (
+                id         SERIAL PRIMARY KEY,
+                user_id    INTEGER REFERENCES users(id),
+                username   TEXT,
+                dept_code  TEXT,
+                query_text TEXT,
+                response   TEXT,
+                source     TEXT,
+                rating     INTEGER NOT NULL,
+                comment    TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logger.warning("Could not ensure feedback_log table: %s", exc)
+
+
+def _seed_db():
+    """Ensure root user and departments exist — works for both SQLite and PostgreSQL."""
+    _DEPTS = [
+        ("hr",         "Human Resources",  "vaultmind-huron-hr-general",         "confidential"),
+        ("legal",      "Legal",            "vaultmind-huron-legal-general",       "restricted"),
+        ("finance",    "Finance",          "vaultmind-huron-finance-general",     "restricted"),
+        ("clinical",   "Clinical",         "vaultmind-huron-clinical-general",    "hipaa_phi"),
+        ("operations", "Operations",       "vaultmind-huron-operations-general",  "internal"),
+        ("it",         "IT & Engineering", "vaultmind-huron-it-general",          "confidential"),
+        ("marketing",  "Marketing",        "vaultmind-huron-marketing-general",   "internal"),
+        ("external",   "External Sources", "vaultmind-huron-external-general",    "public"),
+    ]
+    with _DBConn() as conn:
+        if not conn.execute("SELECT id FROM users WHERE role=?", ("root",)).fetchone():
+            ph = bcrypt.hashpw(b"HuronRoot2026!", bcrypt.gensalt()).decode()
+            conn.execute(
+                "INSERT INTO users (username,email,full_name,password_hash,role,department) "
+                "VALUES (?,?,?,?,?,?)",
+                ("root", "root@huron-vaultmind.ai", "Root Administrator", ph, "root", "all"),
+            )
+            logger.info("Root user created — username: root  password: HuronRoot2026!")
+        for code, name, ns, cls in _DEPTS:
+            if not conn.execute("SELECT id FROM departments WHERE code=?", (code,)).fetchone():
+                conn.execute(
+                    "INSERT INTO departments (code,display_name,namespace,classification) VALUES (?,?,?,?)",
+                    (code, name, ns, cls),
+                )
+        conn.commit()
+
+
 def init_db():
+    if DATABASE_URL:
+        _seed_db()
+        _ensure_pg_feedback_table()
+        return
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
@@ -154,45 +269,30 @@ def init_db():
         )
     """)
 
-    # Root user
-    c.execute("SELECT id FROM users WHERE role = 'root'")
-    if not c.fetchone():
-        ph = bcrypt.hashpw(b"HuronRoot2026!", bcrypt.gensalt()).decode()
-        c.execute(
-            "INSERT INTO users (username,email,full_name,password_hash,role,department) "
-            "VALUES (?,?,?,?,?,?)",
-            ("root", "root@huron-vaultmind.ai", "Root Administrator", ph, "root", "all"),
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS feedback_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER REFERENCES users(id),
+            username    TEXT,
+            dept_code   TEXT,
+            query_text  TEXT,
+            response    TEXT,
+            source      TEXT,
+            rating      INTEGER NOT NULL,
+            comment     TEXT,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        logger.info("Root user created — username: root  password: HuronRoot2026!")
-
-    # Departments
-    for code, name, ns, cls in [
-        ("hr",         "Human Resources",  "vaultmind-huron-hr-general",         "confidential"),
-        ("legal",      "Legal",            "vaultmind-huron-legal-general",       "restricted"),
-        ("finance",    "Finance",          "vaultmind-huron-finance-general",     "restricted"),
-        ("clinical",   "Clinical",         "vaultmind-huron-clinical-general",    "hipaa_phi"),
-        ("operations", "Operations",       "vaultmind-huron-operations-general",  "internal"),
-        ("it",         "IT & Engineering", "vaultmind-huron-it-general",          "confidential"),
-        ("marketing",  "Marketing",        "vaultmind-huron-marketing-general",   "internal"),
-        ("external",   "External Sources", "vaultmind-huron-external-general",    "public"),
-    ]:
-        c.execute("SELECT id FROM departments WHERE code=?", (code,))
-        if not c.fetchone():
-            c.execute(
-                "INSERT INTO departments (code,display_name,namespace,classification) VALUES (?,?,?,?)",
-                (code, name, ns, cls),
-            )
-
+    """)
     conn.commit()
     conn.close()
+    _seed_db()
+    _ensure_pg_feedback_table()
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
 
 def db_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return _DBConn()
 
 
 def get_user_by_id(uid: int) -> Optional[dict]:
@@ -428,6 +528,15 @@ class AccessRequestReview(BaseModel):
     note:       Optional[str] = None
 
 
+class FeedbackRequest(BaseModel):
+    query:     str
+    response:  str
+    rating:    int          # 1 = thumbs up, -1 = thumbs down
+    source:    str = "rag"  # "rag" | "general_knowledge"
+    dept_code: str = "general"
+    comment:   Optional[str] = None
+
+
 # ─── Startup ─────────────────────────────────────────────────────────────────
 init_db()
 
@@ -545,8 +654,10 @@ async def root_create_user(body: CreateUserRequest, p: dict = Depends(require_ro
             )
             conn.execute("UPDATE departments SET user_count=user_count+1 WHERE code=?", (body.department,))
             conn.commit()
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="Username or email already exists")
+    except Exception as e:
+        if isinstance(e, sqlite3.IntegrityError) or "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(status_code=409, detail="Username or email already exists")
+        raise
     write_audit(p["user_id"], p["sub"], "create_user", body.department,
                 detail=f"Created {body.role} {body.username}")
     return {"status": "success", "message": f"User {body.username} created"}
@@ -566,7 +677,7 @@ async def root_update_user(user_id: int, body: UpdateUserRequest, p: dict = Depe
     if body.full_name  is not None: updates.append("full_name=?");  vals.append(body.full_name)
     if body.role       is not None: updates.append("role=?");       vals.append(body.role)
     if body.department is not None: updates.append("department=?"); vals.append(body.department)
-    if body.is_active  is not None: updates.append("is_active=?");  vals.append(1 if body.is_active else 0)
+    if body.is_active  is not None: updates.append("is_active=?");  vals.append(bool(body.is_active))
 
     if updates:
         vals.append(user_id)
@@ -587,9 +698,9 @@ async def root_delete_user(user_id: int, p: dict = Depends(require_root)):
     if target["role"] == "root":
         raise HTTPException(status_code=400, detail="Cannot delete root user")
     with db_conn() as conn:
-        conn.execute("UPDATE users SET is_active=0 WHERE id=?", (user_id,))
+        conn.execute("UPDATE users SET is_active=? WHERE id=?", (False, user_id))
         conn.execute(
-            "UPDATE departments SET user_count=MAX(0,user_count-1) WHERE code=?",
+            "UPDATE departments SET user_count=GREATEST(0,user_count-1) WHERE code=?",
             (target["department"],),
         )
         conn.commit()
@@ -672,8 +783,10 @@ async def _create_dept_user(body: CreateUserRequest, p: dict) -> dict:
             )
             conn.execute("UPDATE departments SET user_count=user_count+1 WHERE code=?", (body.department,))
             conn.commit()
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="Username or email already exists")
+    except Exception as e:
+        if isinstance(e, sqlite3.IntegrityError) or "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(status_code=409, detail="Username or email already exists")
+        raise
     write_audit(p["user_id"], p["sub"], "create_user", body.department,
                 detail=f"Created {body.role} {body.username}")
     return {"status": "success", "message": f"User {body.username} created"}
@@ -719,7 +832,7 @@ async def admin_update_dept_user(
     if body.role is not None and p["role"] == "root":
         updates.append("role=?"); vals.append(body.role)
     if body.is_active is not None:
-        updates.append("is_active=?"); vals.append(1 if body.is_active else 0)
+        updates.append("is_active=?"); vals.append(bool(body.is_active))
 
     if updates:
         vals.append(user_id)
@@ -857,6 +970,50 @@ async def review_access_request(body: AccessRequestReview, p: dict = Depends(req
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# FEEDBACK (thumbs up / down — used to retrain / evaluate the model)
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/v1/feedback")
+async def submit_feedback(body: FeedbackRequest, p: dict = Depends(current_user)):
+    if body.rating not in (1, -1):
+        raise HTTPException(status_code=400, detail="rating must be 1 (up) or -1 (down)")
+    with db_conn() as conn:
+        conn.execute(
+            "INSERT INTO feedback_log "
+            "(user_id,username,dept_code,query_text,response,source,rating,comment) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (p.get("user_id"), p.get("sub"), body.dept_code,
+             body.query[:500], body.response[:1000],
+             body.source, body.rating, body.comment),
+        )
+        conn.commit()
+    write_audit(p.get("user_id"), p.get("sub"), "feedback", body.dept_code,
+                detail=f"rating={'👍' if body.rating == 1 else '👎'} source={body.source}")
+    return {"status": "success"}
+
+
+@app.get("/api/v1/feedback")
+async def list_feedback(
+    limit: int = 100,
+    dept: Optional[str] = None,
+    rating: Optional[int] = None,
+    p: dict = Depends(require_admin),
+):
+    q    = "SELECT * FROM feedback_log WHERE 1=1"
+    args: list = []
+    if p["role"] == "dept_admin":
+        q += " AND dept_code=?"; args.append(p["dept_id"])
+    elif dept:
+        q += " AND dept_code=?"; args.append(dept)
+    if rating is not None:
+        q += " AND rating=?"; args.append(rating)
+    q += " ORDER BY created_at DESC LIMIT ?"; args.append(limit)
+    with db_conn() as conn:
+        rows = conn.execute(q, args).fetchall()
+    return {"feedback": [dict(r) for r in rows], "total": len(rows)}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # DASHBOARD STATS  [FIX 4]
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -866,28 +1023,28 @@ async def get_stats(p: dict = Depends(current_user)):
     dept = p["dept_id"]
 
     with db_conn() as conn:
-        users_q  = "SELECT COUNT(*) FROM users WHERE is_active=1" + ("" if role == "root" else " AND department=?")
+        users_q  = "SELECT COUNT(*) AS n FROM users WHERE is_active=1" + ("" if role == "root" else " AND department=?")
         today    = datetime.utcnow().date().isoformat()
-        qlog_q   = "SELECT COUNT(*) FROM query_log WHERE created_at>=?" + ("" if role == "root" else " AND dept_code=?")
+        qlog_q   = "SELECT COUNT(*) AS n FROM query_log WHERE created_at>=?" + ("" if role == "root" else " AND dept_code=?")
         avgrt_q  = (
-            "SELECT AVG(response_ms) FROM (SELECT response_ms FROM query_log ORDER BY id DESC LIMIT 100)"
+            "SELECT AVG(response_ms) AS v FROM (SELECT response_ms FROM query_log ORDER BY id DESC LIMIT 100) AS _sub"
             if role == "root" else
-            "SELECT AVG(response_ms) FROM (SELECT response_ms FROM query_log WHERE dept_code=? ORDER BY id DESC LIMIT 100)"
+            "SELECT AVG(response_ms) AS v FROM (SELECT response_ms FROM query_log WHERE dept_code=? ORDER BY id DESC LIMIT 100) AS _sub"
         )
         faith_q  = (
-            "SELECT AVG(faithfulness) FROM query_log WHERE faithfulness IS NOT NULL"
+            "SELECT AVG(faithfulness) AS v FROM query_log WHERE faithfulness IS NOT NULL"
             if role == "root" else
-            "SELECT AVG(faithfulness) FROM query_log WHERE dept_code=? AND faithfulness IS NOT NULL"
+            "SELECT AVG(faithfulness) AS v FROM query_log WHERE dept_code=? AND faithfulness IS NOT NULL"
         )
-        docs_q   = "SELECT SUM(doc_count) FROM departments" if role == "root" else "SELECT doc_count FROM departments WHERE code=?"
-        depts_q  = "SELECT COUNT(*) FROM departments WHERE is_active=1"
+        docs_q   = "SELECT SUM(doc_count) AS n FROM departments" if role == "root" else "SELECT doc_count AS n FROM departments WHERE code=?"
+        depts_q  = "SELECT COUNT(*) AS n FROM departments WHERE is_active=1"
 
-        total_users   = conn.execute(users_q,  () if role == "root" else (dept,)).fetchone()[0]
-        queries_today = conn.execute(qlog_q,   (today,) if role == "root" else (today, dept)).fetchone()[0]
-        avg_rt        = conn.execute(avgrt_q,  () if role == "root" else (dept,)).fetchone()[0]
-        avg_faith     = conn.execute(faith_q,  () if role == "root" else (dept,)).fetchone()[0]
-        total_docs    = conn.execute(docs_q,   () if role == "root" else (dept,)).fetchone()[0] or 0
-        dept_count    = conn.execute(depts_q).fetchone()[0]
+        total_users   = conn.execute(users_q,  () if role == "root" else (dept,)).fetchone()["n"]
+        queries_today = conn.execute(qlog_q,   (today,) if role == "root" else (today, dept)).fetchone()["n"]
+        avg_rt        = conn.execute(avgrt_q,  () if role == "root" else (dept,)).fetchone()["v"]
+        avg_faith     = conn.execute(faith_q,  () if role == "root" else (dept,)).fetchone()["v"]
+        total_docs    = conn.execute(docs_q,   () if role == "root" else (dept,)).fetchone()["n"] or 0
+        dept_count    = conn.execute(depts_q).fetchone()["n"]
 
     pinecone_info: dict = {}
     try:
@@ -953,6 +1110,137 @@ async def list_departments(p: dict = Depends(current_user)):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# SOURCE GUARD — detect RAG hallucinations before returning to the user
+# ═════════════════════════════════════════════════════════════════════════════
+
+SOURCE_GUARD_ENABLED   = os.getenv("SOURCE_GUARD_ENABLED", "true").lower() == "true"
+SOURCE_GUARD_THRESHOLD = float(os.getenv("SOURCE_GUARD_THRESHOLD", "0.6"))
+
+
+async def _source_guard(query: str, response: str,
+                        sources: list, faithfulness_score: Optional[float]) -> dict:
+    """
+    Two-layer hallucination check:
+      1. Use faithfulness_score from the RAG orchestrator if available.
+      2. Fall back to a fast LLM sanity-check using gpt-4o-mini (<100 tokens).
+    Returns {"passed": bool, "score": float, "warning": str|None}
+    """
+    if not SOURCE_GUARD_ENABLED or not sources:
+        return {"passed": True, "score": 1.0, "warning": None}
+
+    # Layer 1: trust the RAG pipeline's own score
+    if faithfulness_score is not None:
+        passed  = faithfulness_score >= SOURCE_GUARD_THRESHOLD
+        warning = None if passed else "RAG faithfulness score is low — verify against source documents."
+        return {"passed": passed, "score": faithfulness_score, "warning": warning}
+
+    # Layer 2: lightweight LLM check (only when no faithfulness score)
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        return {"passed": True, "score": 1.0, "warning": None}
+
+    titles = ", ".join(s.get("title", "") for s in sources if s.get("title"))
+    prompt = (
+        f"You are a hallucination detector.\n"
+        f"Query: {query[:300]}\n"
+        f"Response: {response[:500]}\n"
+        f"Source documents: {titles}\n\n"
+        f"Does the response appear grounded in these sources? "
+        f'Reply with JSON only: {{"score": 0-10, "warning": "brief concern or null"}}'
+    )
+
+    try:
+        from openai import AsyncOpenAI
+        import json as _json
+        client = AsyncOpenAI(api_key=api_key)
+        r = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=80,
+            temperature=0,
+        )
+        raw = _json.loads(r.choices[0].message.content or "{}")
+        score   = float(raw.get("score", 10)) / 10.0
+        warning = raw.get("warning") if score < SOURCE_GUARD_THRESHOLD else None
+        return {"passed": score >= SOURCE_GUARD_THRESHOLD, "score": round(score, 2), "warning": warning}
+    except Exception as exc:
+        logger.debug("Source guard LLM check skipped: %s", exc)
+        return {"passed": True, "score": 1.0, "warning": None}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# LLM DIRECT FALLBACK — used when RAG pipeline / documents are unavailable
+# ═════════════════════════════════════════════════════════════════════════════
+
+DEPT_LABELS = {
+    "hr": "Human Resources", "legal": "Legal", "finance": "Finance",
+    "clinical": "Clinical", "operations": "Operations",
+    "it": "IT & Engineering", "marketing": "Marketing",
+    "external": "External Sources", "all": "All Departments",
+}
+
+
+async def _llm_direct(messages: list[dict], dept: str) -> dict:
+    """Call OpenAI directly — fallback when RAG pipeline or documents are unavailable."""
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        return {
+            "status": "error",
+            "response": (
+                "The knowledge base is not available and no AI API key is configured. "
+                "Please ask your administrator to set OPENAI_API_KEY."
+            ),
+            "source": "error",
+            "sources": [],
+        }
+
+    dept_label = DEPT_LABELS.get(dept, dept.replace("_", " ").title()) if dept else "General"
+    system_msg = (
+        f"You are Huron, an AI knowledge assistant for the {dept_label} department at Huron VaultMind. "
+        "You are currently responding from your general knowledge because no department documents "
+        "have been indexed yet, or the knowledge base is temporarily unavailable. "
+        "Be helpful, professional, and concise. "
+        "At the end of every response, add a brief note reminding the user that this answer is "
+        "based on general AI knowledge and not on company-specific documents."
+    )
+
+    conv = [{"role": "system", "content": system_msg}] + [
+        {"role": m["role"], "content": m["content"]}
+        for m in messages
+        if m.get("role") in ("user", "assistant")
+    ]
+
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=api_key)
+        resp = await client.chat.completions.create(
+            model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+            messages=conv,
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        answer = resp.choices[0].message.content or ""
+        return {
+            "status": "success",
+            "response": answer,
+            "source": "general_knowledge",
+            "source_label": f"General knowledge — no {dept_label} documents indexed",
+            "sources": [],
+        }
+    except Exception as exc:
+        logger.warning("LLM direct fallback error: %s", exc)
+        return {
+            "status": "error",
+            "response": (
+                "I'm unable to respond right now. The knowledge base is unavailable and "
+                "the AI service returned an error. Please try again later."
+            ),
+            "source": "error",
+            "sources": [],
+        }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # QUERY / CHAT / INGEST
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -964,26 +1252,37 @@ async def query_endpoint(req: QueryRequest, p: dict = Depends(current_user)):
 
     rag = get_rag()
     if not rag:
-        return {"status": "degraded", "query": req.query,
-                "results": "RAG pipeline unavailable — ensure OPENAI_API_KEY and PINECONE_API_KEY are set.",
-                "sources": []}
+        fb = await _llm_direct([{"role": "user", "content": req.query}], dept)
+        log_query(p.get("user_id", 0), dept, req.query, 0, 0, 0)
+        return {
+            "status":  fb["status"],
+            "query":   req.query,
+            "results": fb["response"],
+            "sources": [],
+            "source":  fb.get("source", "general_knowledge"),
+            "source_label": fb.get("source_label", ""),
+        }
 
     t0 = time.time()
     try:
         from utils.tenant_context import TenantContext
         ctx    = TenantContext(tenant_id="huron", dept_id=dept,
                                username=p.get("sub"), role=p.get("role", "user"))
-        result = await rag.query(query=req.query, tenant_context=ctx)
+        result  = await rag.query(query=req.query, tenant_context=ctx)
         elapsed = int((time.time() - t0) * 1000)
-        log_query(p.get("user_id", 0), dept, req.query, elapsed,
-                  result.get("faithfulness_score", 0), len(result.get("sources", [])))
+        sources = [{"title": s} for s in result.get("sources", [])]
+        faith   = result.get("faithfulness_score")
+        log_query(p.get("user_id", 0), dept, req.query, elapsed, faith or 0, len(sources))
+        guard   = await _source_guard(req.query, result.get("response", ""), sources, faith)
         return {
             "status":             "success",
             "query":              req.query,
             "results":            result.get("response", ""),
-            "sources":            [{"title": s} for s in result.get("sources", [])],
+            "sources":            sources,
+            "source":             "rag",
+            "source_guard":       guard,
             "intent":             result.get("intent"),
-            "faithfulness_score": result.get("faithfulness_score"),
+            "faithfulness_score": faith,
             "processing_time_ms": elapsed,
         }
     except Exception as e:
@@ -999,15 +1298,24 @@ async def chat_endpoint(req: ChatRequest, p: dict = Depends(current_user)):
 
     rag = get_rag()
     if not rag:
-        return {"status": "degraded", "response": "RAG pipeline unavailable.", "sources": []}
+        return await _llm_direct(req.messages, dept)
 
     try:
         from utils.tenant_context import TenantContext
         ctx    = TenantContext(tenant_id="huron", dept_id=dept,
                                username=p.get("sub"), role=p.get("role", "user"))
-        result = await rag.query(query=last, tenant_context=ctx)
-        return {"status": "success", "response": result.get("response", ""),
-                "sources": [{"title": s} for s in result.get("sources", [])]}
+        result  = await rag.query(query=last, tenant_context=ctx)
+        sources = [{"title": s} for s in result.get("sources", [])]
+        faith   = result.get("faithfulness_score")
+        guard   = await _source_guard(last, result.get("response", ""), sources, faith)
+        return {
+            "status":             "success",
+            "response":           result.get("response", ""),
+            "source":             "rag",
+            "sources":            sources,
+            "source_guard":       guard,
+            "faithfulness_score": faith,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1072,7 +1380,8 @@ async def health():
     try:
         with db_conn() as conn:
             conn.execute("SELECT 1")
-        return {"status": "healthy", "version": "4.0.0", "db": "sqlite",
+        db_backend = "postgresql" if DATABASE_URL else "sqlite"
+        return {"status": "healthy", "version": "4.0.0", "db": db_backend,
                 "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         return {"status": "degraded", "error": str(e)}
@@ -1098,4 +1407,4 @@ async def list_indexes(p: dict = Depends(current_user)):
 # ═════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8004, reload=True)

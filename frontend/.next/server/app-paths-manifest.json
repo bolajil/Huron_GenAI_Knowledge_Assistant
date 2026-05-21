@@ -1,7 +1,7 @@
 {
   "/page": "app/page.js",
-  "/mfa/page": "app/mfa/page.js",
-  "/dashboard/page": "app/dashboard/page.js",
-  "/dashboard/admin/departments/page": "app/dashboard/admin/departments/page.js",
-  "/dashboard/admin/page": "app/dashboard/admin/page.js"
+  "/dashboard/chat/page": "app/dashboard/chat/page.js",
+  "/dashboard/analytics/page": "app/dashboard/analytics/page.js",
+  "/dashboard/query/page": "app/dashboard/query/page.js",
+  "/dashboard/page": "app/dashboard/page.js"
 }
