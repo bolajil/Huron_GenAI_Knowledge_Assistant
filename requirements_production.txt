@@ -1,0 +1,51 @@
+# ── Core API ────────────────────────────────────────────────────────────────
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+gunicorn==23.0.0
+python-multipart==0.0.17
+
+# ── Auth / security ──────────────────────────────────────────────────────────
+PyJWT==2.10.1
+bcrypt==4.2.1
+cryptography==43.0.3
+pyotp==2.9.0
+
+# ── Database ─────────────────────────────────────────────────────────────────
+# SQLite ships with Python — no extra package needed for dev/staging
+# PostgreSQL (production):
+psycopg2-binary==2.9.10
+SQLAlchemy==2.0.36
+
+# ── Caching / queue (production) ─────────────────────────────────────────────
+redis==5.2.0
+
+# ── AI / vector store ────────────────────────────────────────────────────────
+openai==1.59.0
+pinecone-client==5.0.1
+langchain==0.3.14
+langchain-openai==0.3.0
+langchain-community==0.3.14
+langchain-pinecone==0.2.0
+tiktoken==0.8.0
+
+# ── Document parsing ─────────────────────────────────────────────────────────
+pypdf==5.1.0
+python-docx==1.1.2
+unstructured[pdf]==0.16.12
+
+# ── HTTP / async ─────────────────────────────────────────────────────────────
+httpx==0.28.1
+aiohttp==3.11.10
+
+# ── Config / env ─────────────────────────────────────────────────────────────
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-dotenv==1.0.1
+
+# ── Observability ────────────────────────────────────────────────────────────
+structlog==24.4.0
+prometheus-client==0.21.1
+
+# ── CORS / rate-limit ────────────────────────────────────────────────────────
+slowapi==0.1.9
+starlette==0.41.3
