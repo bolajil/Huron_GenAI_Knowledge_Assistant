@@ -205,11 +205,39 @@ def _ensure_pg_agent_runs_table():
         logger.warning("Could not ensure agent_runs table: %s", exc)
 
 
+def _ensure_pg_doc_versions_table():
+    """Create document_versions table in PostgreSQL if missing."""
+    try:
+        conn = _DBConn()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS document_versions (
+                id             SERIAL PRIMARY KEY,
+                dept           TEXT NOT NULL,
+                doc_id         TEXT NOT NULL,
+                version        TEXT NOT NULL,
+                source_file    TEXT NOT NULL,
+                file_type      TEXT NOT NULL DEFAULT 'unknown',
+                effective_date TEXT,
+                vector_ids     TEXT,
+                chunk_count    INTEGER DEFAULT 0,
+                is_latest      INTEGER DEFAULT 1,
+                ingested_by    TEXT,
+                ingested_at    TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(dept, doc_id, version)
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logger.warning("Could not ensure document_versions table: %s", exc)
+
+
 def init_db():
     if DATABASE_URL:
         _seed_db()
         _ensure_pg_feedback_table()
         _ensure_pg_agent_runs_table()
+        _ensure_pg_doc_versions_table()
         return
 
     conn = sqlite3.connect(DB_PATH)
@@ -326,11 +354,31 @@ def init_db():
             created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS document_versions (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            dept           TEXT NOT NULL,
+            doc_id         TEXT NOT NULL,
+            version        TEXT NOT NULL,
+            source_file    TEXT NOT NULL,
+            file_type      TEXT NOT NULL DEFAULT 'unknown',
+            effective_date TEXT,
+            vector_ids     TEXT,
+            chunk_count    INTEGER DEFAULT 0,
+            is_latest      INTEGER DEFAULT 1,
+            ingested_by    TEXT,
+            ingested_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(dept, doc_id, version)
+        )
+    """)
+
     conn.commit()
     conn.close()
     _seed_db()
     _ensure_pg_feedback_table()
     _ensure_pg_agent_runs_table()
+    _ensure_pg_doc_versions_table()
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -1381,10 +1429,12 @@ async def chat_endpoint(req: ChatRequest, p: dict = Depends(current_user)):
 
 @app.post("/api/v1/ingest")
 async def ingest_endpoint(
-    file: UploadFile = File(...),
-    department: str  = Form("general"),
-    sensitivity_level: str = Form("internal"),
-    token: str       = Depends(oauth2_scheme),
+    file:              UploadFile = File(...),
+    department:        str        = Form("general"),
+    sensitivity_level: str        = Form("internal"),
+    doc_id:            str        = Form(""),
+    version:           str        = Form(""),
+    token:             str        = Depends(oauth2_scheme),
 ):
     p = verify_token(token)
     if not p:
@@ -1407,6 +1457,7 @@ async def ingest_endpoint(
         result = await svc.ingest_document(
             file_content=content, file_name=file.filename,
             tenant_context=ctx, sensitivity_level=sensitivity_level,
+            doc_id=doc_id or None, version=version or None,
         )
         if result.success:
             with db_conn() as conn:
@@ -1418,6 +1469,8 @@ async def ingest_endpoint(
         return {
             "status":          "success" if result.success else "error",
             "document_id":     getattr(result, "document_id", ""),
+            "version":         getattr(result, "version", ""),
+            "file_type":       getattr(result, "file_type", ""),
             "file":            file.filename,
             "department":      dept,
             "namespace":       getattr(result, "namespace", ""),
@@ -1428,6 +1481,172 @@ async def ingest_endpoint(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DOCUMENT VERSION MANAGEMENT
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/v1/documents/{dept}")
+async def list_documents(dept: str, token: str = Depends(oauth2_scheme)):
+    """List all documents in a department with their latest version info."""
+    p = verify_token(token)
+    if not p:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    dept_gate(p, dept)
+    with db_conn() as conn:
+        rows = conn.execute(
+            """SELECT doc_id, version, source_file, file_type, effective_date,
+                      chunk_count, ingested_by, ingested_at
+               FROM document_versions
+               WHERE dept=? AND is_latest=1
+               ORDER BY ingested_at DESC""",
+            (dept,),
+        ).fetchall()
+    return {"dept": dept, "documents": [
+        {"doc_id": r[0], "version": r[1], "source_file": r[2], "file_type": r[3],
+         "effective_date": r[4], "chunk_count": r[5], "ingested_by": r[6], "ingested_at": r[7]}
+        for r in rows
+    ]}
+
+
+@app.get("/api/v1/documents/{dept}/{doc_id}/versions")
+async def document_version_history(dept: str, doc_id: str, token: str = Depends(oauth2_scheme)):
+    """Full version history for a document."""
+    p = verify_token(token)
+    if not p:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    dept_gate(p, dept)
+    with db_conn() as conn:
+        rows = conn.execute(
+            """SELECT version, source_file, file_type, effective_date,
+                      chunk_count, is_latest, ingested_by, ingested_at
+               FROM document_versions
+               WHERE dept=? AND doc_id=?
+               ORDER BY ingested_at DESC""",
+            (dept, doc_id),
+        ).fetchall()
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"dept": dept, "doc_id": doc_id, "versions": [
+        {"version": r[0], "source_file": r[1], "file_type": r[2], "effective_date": r[3],
+         "chunk_count": r[4], "is_latest": bool(r[5]), "ingested_by": r[6], "ingested_at": r[7]}
+        for r in rows
+    ]}
+
+
+class RollbackRequest(BaseModel):
+    version: str
+
+
+@app.post("/api/v1/documents/{dept}/{doc_id}/rollback")
+async def rollback_document(
+    dept: str, doc_id: str, req: RollbackRequest, token: str = Depends(oauth2_scheme)
+):
+    """Roll back to a previous document version."""
+    p = verify_token(token)
+    if not p:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    perm(p, "ingest")
+    dept_gate(p, dept)
+
+    with db_conn() as conn:
+        target = conn.execute(
+            "SELECT vector_ids FROM document_versions WHERE dept=? AND doc_id=? AND version=?",
+            (dept, doc_id, req.version),
+        ).fetchone()
+        if not target:
+            raise HTTPException(status_code=404, detail=f"Version {req.version} not found")
+
+        # Mark current latest as not-latest in DB
+        conn.execute(
+            "UPDATE document_versions SET is_latest=0 WHERE dept=? AND doc_id=? AND is_latest=1",
+            (dept, doc_id),
+        )
+        # Mark target version as latest in DB
+        conn.execute(
+            "UPDATE document_versions SET is_latest=1 WHERE dept=? AND doc_id=? AND version=?",
+            (dept, doc_id, req.version),
+        )
+        conn.commit()
+
+    # Update Pinecone metadata
+    namespace = f"vaultmind-huron-{dept}-general"
+    try:
+        from pinecone import Pinecone as PC
+        idx = PC(api_key=os.getenv("PINECONE_API_KEY", "")).Index(
+            os.getenv("PINECONE_INDEX", "huron-enterprise-knowledge")
+        )
+        # Mark all versions for this doc as not-latest first
+        with db_conn() as conn:
+            all_rows = conn.execute(
+                "SELECT version, vector_ids FROM document_versions WHERE dept=? AND doc_id=?",
+                (dept, doc_id),
+            ).fetchall()
+        import json as _json
+        for row_version, row_vids_json in all_rows:
+            if not row_vids_json:
+                continue
+            vids       = _json.loads(row_vids_json)
+            is_current = (row_version == req.version)
+            for vid in vids:
+                try:
+                    idx.update(id=vid, set_metadata={"is_latest": is_current}, namespace=namespace)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning("Pinecone rollback metadata update failed: %s", e)
+
+    write_audit(p.get("user_id"), p.get("sub"), "rollback", dept, namespace,
+                f"doc_id={doc_id} rolled back to version={req.version}")
+    return {"status": "success", "doc_id": doc_id, "active_version": req.version}
+
+
+@app.delete("/api/v1/documents/{dept}/{doc_id}")
+async def delete_document(dept: str, doc_id: str, token: str = Depends(oauth2_scheme)):
+    """Delete all versions of a document from Pinecone and DB."""
+    p = verify_token(token)
+    if not p:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    perm(p, "ingest")
+    dept_gate(p, dept)
+
+    namespace = f"vaultmind-huron-{dept}-general"
+    deleted_chunks = 0
+
+    with db_conn() as conn:
+        rows = conn.execute(
+            "SELECT vector_ids FROM document_versions WHERE dept=? AND doc_id=?",
+            (dept, doc_id),
+        ).fetchall()
+
+    import json as _json
+    all_vids: list = []
+    for (vids_json,) in rows:
+        if vids_json:
+            all_vids.extend(_json.loads(vids_json))
+
+    if all_vids:
+        try:
+            from pinecone import Pinecone as PC
+            idx = PC(api_key=os.getenv("PINECONE_API_KEY", "")).Index(
+                os.getenv("PINECONE_INDEX", "huron-enterprise-knowledge")
+            )
+            for batch_start in range(0, len(all_vids), 100):
+                idx.delete(ids=all_vids[batch_start:batch_start + 100], namespace=namespace)
+            deleted_chunks = len(all_vids)
+        except Exception as e:
+            logger.warning("Pinecone delete failed: %s", e)
+
+    with db_conn() as conn:
+        conn.execute(
+            "DELETE FROM document_versions WHERE dept=? AND doc_id=?", (dept, doc_id)
+        )
+        conn.commit()
+
+    write_audit(p.get("user_id"), p.get("sub"), "delete_document", dept, namespace,
+                f"doc_id={doc_id} deleted_chunks={deleted_chunks}")
+    return {"status": "success", "doc_id": doc_id, "deleted_chunks": deleted_chunks}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

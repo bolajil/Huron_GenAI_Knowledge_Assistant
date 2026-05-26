@@ -37,15 +37,39 @@ export interface QueryResponse {
 }
 
 export interface IngestResponse {
-  status: string;
-  document_id: string;
-  file: string;
-  department: string;
-  namespace: string;
-  parent_chunks: number;
-  child_chunks: number;
+  status:          string;
+  document_id:     string;
+  version:         string;
+  file_type:       string;
+  file:            string;
+  department:      string;
+  namespace:       string;
+  parent_chunks:   number;
+  child_chunks:    number;
   pinecone_upsert: boolean;
-  warnings: string[];
+  warnings:        string[];
+}
+
+export interface DocumentSummary {
+  doc_id:         string;
+  version:        string;
+  source_file:    string;
+  file_type:      string;
+  effective_date: string;
+  chunk_count:    number;
+  ingested_by:    string;
+  ingested_at:    string;
+}
+
+export interface DocumentVersion {
+  version:        string;
+  source_file:    string;
+  file_type:      string;
+  effective_date: string;
+  chunk_count:    number;
+  is_latest:      boolean;
+  ingested_by:    string;
+  ingested_at:    string;
 }
 
 export interface StatsResponse {
@@ -304,12 +328,16 @@ export const api = {
   async ingestDocument(
     file: File,
     department = "general",
-    sensitivityLevel = "internal"
+    sensitivityLevel = "internal",
+    docId = "",
+    version = "",
   ): Promise<IngestResponse> {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("department", department);
     formData.append("sensitivity_level", sensitivityLevel);
+    if (docId)   formData.append("doc_id",  docId);
+    if (version) formData.append("version", version);
 
     const response = await fetch(`${API_BASE_URL}/api/v1/ingest`, {
       method: "POST",
@@ -320,6 +348,41 @@ export const api = {
       const err = await response.json();
       throw new Error(err.detail || "Upload failed");
     }
+    return response.json();
+  },
+
+  async listDocuments(dept: string): Promise<{ dept: string; documents: DocumentSummary[] }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/${dept}`, {
+      headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+    });
+    if (!response.ok) throw new Error("Failed to fetch documents");
+    return response.json();
+  },
+
+  async getDocumentVersions(dept: string, docId: string): Promise<{ doc_id: string; versions: DocumentVersion[] }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/${dept}/${docId}/versions`, {
+      headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+    });
+    if (!response.ok) throw new Error("Failed to fetch versions");
+    return response.json();
+  },
+
+  async rollbackDocument(dept: string, docId: string, version: string): Promise<{ status: string; active_version: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/${dept}/${docId}/rollback`, {
+      method: "POST",
+      headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+      body: JSON.stringify({ version }),
+    });
+    if (!response.ok) throw new Error("Rollback failed");
+    return response.json();
+  },
+
+  async deleteDocument(dept: string, docId: string): Promise<{ status: string; deleted_chunks: number }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/${dept}/${docId}`, {
+      method: "DELETE",
+      headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+    });
+    if (!response.ok) throw new Error("Delete failed");
     return response.json();
   },
 

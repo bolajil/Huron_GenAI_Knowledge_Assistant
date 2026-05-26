@@ -87,14 +87,17 @@ class AgentTools:
                 top_k=top_k,
                 namespace=namespace,
                 include_metadata=True,
+                filter={"is_latest": {"$eq": True}},
             )
             chunks = [
                 {
-                    "text":   m.metadata.get("text", ""),
-                    "score":  round(m.score, 4),
-                    "source": m.metadata.get("source", ""),
-                    "page":   m.metadata.get("page", None),
-                    "dept":   dept,
+                    "text":        m.metadata.get("text", ""),
+                    "score":       round(m.score, 4),
+                    "source":      m.metadata.get("source", ""),
+                    "page":        m.metadata.get("page", None),
+                    "doc_version": m.metadata.get("doc_version", ""),
+                    "file_type":   m.metadata.get("file_type", ""),
+                    "dept":        dept,
                 }
                 for m in res.matches
             ]
