@@ -7,6 +7,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Loader2, Bot, User, Trash2, ThumbsUp, ThumbsDown, ShieldAlert } from "lucide-react";
 import { api } from "../../services/api";
+import { useAuth } from "../../contexts/auth-context";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004";
 
@@ -41,6 +42,8 @@ interface IndexInfo {
 }
 
 export function ChatInterface() {
+  const { user } = useAuth();
+
   const [messages, setMessages]           = useState<Message[]>([]);
   const [input, setInput]                 = useState("");
   const [loading, setLoading]             = useState(false);
@@ -58,14 +61,17 @@ export function ChatInterface() {
         const data = await response.json();
         if (data.indexes && data.indexes.length > 0) {
           setAvailableIndexes(data.indexes);
-          setSelectedIndex(data.indexes[0].name);
+          // Prefer the index matching the logged-in user's own department
+          const userDept = user?.department ?? "general";
+          const preferred = data.indexes.find((i: IndexInfo) => i.dept === userDept);
+          setSelectedIndex((preferred ?? data.indexes[0]).name);
         }
       } catch (err) {
         console.error("Failed to fetch indexes:", err);
       }
     };
     fetchIndexes();
-  }, []);
+  }, [user?.department]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -98,8 +104,10 @@ export function ChatInterface() {
     setInput("");
     setLoading(true);
 
-    // derive dept from selected index name (e.g. "vaultmind-huron-hr-general" → "hr")
-    const deptCode = availableIndexes.find((i) => i.name === selectedIndex)?.dept ?? "general";
+    // Use the dept from the selected index; fall back to the user's own department
+    const deptCode = availableIndexes.find((i) => i.name === selectedIndex)?.dept
+      ?? user?.department
+      ?? "general";
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/chat`, {
