@@ -1149,15 +1149,24 @@ async def get_stats(p: dict = Depends(current_user)):
             if role == "root" else
             "SELECT AVG(faithfulness) AS v FROM query_log WHERE dept_code=? AND faithfulness IS NOT NULL"
         )
-        docs_q   = "SELECT SUM(doc_count) AS n FROM departments" if role == "root" else "SELECT doc_count AS n FROM departments WHERE code=?"
+        # Use COALESCE subquery so fetchone() always returns exactly one row
+        docs_q = (
+            "SELECT COALESCE(SUM(doc_count), 0) AS n FROM departments"
+            if role == "root" else
+            "SELECT COALESCE((SELECT doc_count FROM departments WHERE code=?), 0) AS n"
+        )
         depts_q  = "SELECT COUNT(*) AS n FROM departments WHERE is_active=1"
 
-        total_users   = conn.execute(users_q,  () if role == "root" else (dept,)).fetchone()["n"]
-        queries_today = conn.execute(qlog_q,   (today,) if role == "root" else (today, dept)).fetchone()["n"]
-        avg_rt        = conn.execute(avgrt_q,  () if role == "root" else (dept,)).fetchone()["v"]
-        avg_faith     = conn.execute(faith_q,  () if role == "root" else (dept,)).fetchone()["v"]
-        total_docs    = conn.execute(docs_q,   () if role == "root" else (dept,)).fetchone()["n"] or 0
-        dept_count    = conn.execute(depts_q).fetchone()["n"]
+        def _val(q, params, key):
+            row = conn.execute(q, params).fetchone()
+            return row[key] if row else None
+
+        total_users   = _val(users_q,  () if role == "root" else (dept,), "n")
+        queries_today = _val(qlog_q,   (today,) if role == "root" else (today, dept), "n")
+        avg_rt        = _val(avgrt_q,  () if role == "root" else (dept,), "v")
+        avg_faith     = _val(faith_q,  () if role == "root" else (dept,), "v")
+        total_docs    = _val(docs_q,   () if role == "root" else (dept,), "n")
+        dept_count    = _val(depts_q,  (), "n")
 
     pinecone_info: dict = {}
     try:
@@ -1169,13 +1178,13 @@ async def get_stats(p: dict = Depends(current_user)):
         pinecone_info = {"status": "unavailable", "error": str(e)}
 
     return {
-        "total_documents":   int(total_docs),
+        "total_documents":   int(total_docs    or 0),
         "queries_today":     int(queries_today or 0),
-        "active_users":      int(total_users or 0),
-        "total_users":       int(total_users or 0),
-        "departments":       int(dept_count or 0),
-        "avg_response_time": round((avg_rt or 0) / 1000, 2),
-        "avg_faithfulness":  round(avg_faith or 0, 2),
+        "active_users":      int(total_users   or 0),
+        "total_users":       int(total_users   or 0),
+        "departments":       int(dept_count    or 0),
+        "avg_response_time": round((avg_rt    or 0) / 1000, 2),
+        "avg_faithfulness":  round((avg_faith or 0), 2),
         "pinecone":          pinecone_info,
         "scope":             "global" if role == "root" else dept,
     }
@@ -1796,16 +1805,22 @@ async def health():
 
 @app.get("/api/v1/indexes")
 async def list_indexes(p: dict = Depends(current_user)):
+    role  = p.get("role", "user")
+    udept = p.get("dept_id", "general")
     with db_conn() as conn:
         rows = conn.execute(
             "SELECT code,display_name,namespace,doc_count,classification FROM departments WHERE is_active=1"
         ).fetchall()
-    indexes = [
-        {"name": r["namespace"], "dept": r["code"], "display_name": r["display_name"],
-         "type": "Pinecone", "documents": r["doc_count"],
-         "classification": r["classification"], "status": "active"}
-        for r in rows
-    ]
+    indexes = []
+    for r in rows:
+        # root / dept_admin / power_user see all; regular users see only their dept
+        if role in ("root", "dept_admin", "power_user") or r["code"] == udept:
+            indexes.append({
+                "name": r["namespace"], "dept": r["code"],
+                "display_name": r["display_name"],
+                "type": "Pinecone", "documents": r["doc_count"],
+                "classification": r["classification"], "status": "active",
+            })
     return {"status": "success", "count": len(indexes), "indexes": indexes}
 
 
