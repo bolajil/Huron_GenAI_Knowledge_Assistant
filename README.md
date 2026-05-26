@@ -1,438 +1,485 @@
-# VaultMind GenAI Knowledge Assistant
+# Huron GenAI Knowledge Assistant
 
-[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Streamlit](https://img.shields.io/badge/streamlit-1.28+-red.svg)](https://streamlit.io)
-[![LangChain](https://img.shields.io/badge/langchain-0.1+-yellow.svg)](https://langchain.com)
-[![LangGraph](https://img.shields.io/badge/langgraph-0.6+-orange.svg)](https://langchain-ai.github.io/langgraph/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
+[![Next.js](https://img.shields.io/badge/Next.js-14.2-black?style=flat-square&logo=next.js)](https://nextjs.org)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python)](https://python.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6?style=flat-square&logo=typescript)](https://typescriptlang.org)
+[![Pinecone](https://img.shields.io/badge/Pinecone-Vector_DB-00C98E?style=flat-square)](https://pinecone.io)
+[![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-412991?style=flat-square&logo=openai)](https://openai.com)
+[![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
-**Enterprise RAG with multi-vector search, hybrid retrieval, LangGraph autonomous reasoning, and intelligent document quality control**
-
-<<<<<<< HEAD
-[🎬 Live Demo](#demo) | [📖 Documentation](#documentation) | [🚀 Quick Start](#quickstart-local) | [💡 Features](#key-features)
-
----
-
-## Overview
-
-VaultMind is an enterprise-grade GenAI knowledge assistant that turns scattered documents and analytics into trustworthy, cited answers. It intelligently routes queries between fast retrieval and deep reasoning, ensuring optimal performance for every question.
-
-### What Makes VaultMind Different
-
-✨ **Hybrid Intelligence** - Automatically routes simple queries to fast retrieval, complex queries to LangGraph autonomous agent  
-🎯 **Multi-Vector Flexibility** - Works with Weaviate, FAISS, OpenSearch, Azure AI Search, Vertex AI, Pinecone, Qdrant, PGVector  
-📊 **Document Quality Control** - Automatically detects and fixes OCR errors, missing spaces, and text quality issues  
-🔒 **Enterprise-Ready** - RBAC, audit logs, approval workflows, and compliance-ready governance  
-🤖 **BYO-LLM** - OpenAI, Anthropic, Mistral, Groq, Ollama - no vendor lock-in  
-📈 **Production-Tested** - Handles 1000+ documents, real-time ingestion, comprehensive monitoring
-
-### Quick Links
-- 📚 [Demo Guide](DEMO_GUIDE.md) - Complete demo scenarios and talk tracks
-- 🚀 [Deployment Guide](DEPLOYMENT.md) - Local, Docker, Cloud deployment options
-- ✅ [Publishing Checklist](PUBLISH_CHECKLIST.md) - Go-to-market preparation
-- ⚡ [Quick Publish](QUICK_PUBLISH.md) - Deploy in 30 minutes
-- 📊 [Document Quality Guide](DOCUMENT_QUALITY_GUIDE.md) - Fix OCR and text issues
-=======
-Quick links
-- Demo repo (Streamlit, Demo Mode)
-- Live demo URL: configure via Streamlit Community Cloud (Main file: `app.py`, Python 3.10)https://genai-knowledge-assistant-8gmzhaf3k4wduueal3u4ks.streamlit.app/
-- Request a User login and Password from this email: bolafiz2001@gmail.com
-- ICP (Ideal Customer Profile): see [docs/ICP.md](docs/ICP.md)
-- One‑pager / Deck: coming soon (docs/)
->>>>>>> de525cfb8f3a30a0114d9c873e8c05ffaf697075
+> **Enterprise-grade, multi-tenant AI knowledge platform** — search, reason, and compare policy documents across departments using a production ReAct agent, versioned document ingestion, and role-based namespace isolation backed by Pinecone.
 
 ---
 
-## Why VaultMind
-Teams waste hours digging through SharePoint, Confluence, PDFs, Excel, and BI dashboards. VaultMind unifies retrieval with hybrid search (vector + keyword + re‑ranking), enforces enterprise permissions, and generates cited answers so users trust results and admins stay in control.
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          HURON GENAI PLATFORM                               │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                  NEXT.JS 14 FRONTEND  (Port 3000)                   │   │
+│   │                                                                     │   │
+│   │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │   │
+│   │  │  Login   │ │Dashboard │ │  Chat    │ │  Query   │ │  Agent   │ │   │
+│   │  │  + MFA   │ │ + Stats  │ │Assistant │ │Assistant │ │Assistant │ │   │
+│   │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘ │   │
+│   │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │   │
+│   │  │ Document │ │  Index   │ │Analytics │ │  Admin   │ │  Access  │ │   │
+│   │  │  Ingest  │ │  Mgmt    │ │ + Audit  │ │  Panel   │ │ Requests │ │   │
+│   │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘ │   │
+│   └─────────────────────────┬───────────────────────────────────────────┘   │
+│                             │  REST + SSE                                    │
+│   ┌─────────────────────────▼───────────────────────────────────────────┐   │
+│   │                   FASTAPI BACKEND  (Port 8004)                       │   │
+│   │                                                                      │   │
+│   │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────┐  │   │
+│   │  │  Auth Layer │  │  RBAC Gate  │  │  Audit Log  │  │Rate Limit │  │   │
+│   │  │  JWT + MFA  │  │ 4-Tier Roles│  │ All Actions │  │  SlowAPI  │  │   │
+│   │  └──────┬──────┘  └──────┬──────┘  └─────────────┘  └───────────┘  │   │
+│   │         │                │                                            │   │
+│   │  ┌──────▼────────────────▼────────────────────────────────────────┐  │   │
+│   │  │                      API ROUTES                                 │  │   │
+│   │  │   /auth  /query  /chat  /ingest  /agent  /admin  /documents    │  │   │
+│   │  └──────┬────────────────┬──────────────┬──────────────────────────┘  │   │
+│   │         │                │              │                               │   │
+│   │  ┌──────▼──────┐  ┌──────▼──────┐  ┌───▼──────────────────────────┐  │   │
+│   │  │   ReAct     │  │  Versioned  │  │    RAG Orchestrator           │  │   │
+│   │  │   Agent     │  │  Ingestion  │  │    + Source Guard             │  │   │
+│   │  │  SSE Stream │  │  All Types  │  │                               │  │   │
+│   │  └──────┬──────┘  └──────┬──────┘  └───┬───────────────────────────┘  │   │
+│   └─────────┼────────────────┼──────────────┼───────────────────────────────┘   │
+│             │                │              │                                     │
+│   ┌─────────▼────────────────▼──────────────▼──────────────────────────────┐    │
+│   │                         DATA LAYER                                      │    │
+│   │                                                                         │    │
+│   │  ┌──────────────┐  ┌──────────────────┐  ┌───────────────────────────┐ │    │
+│   │  │   PINECONE   │  │  SQLite / Postgres│  │        OPENAI APIs        │ │    │
+│   │  │  Vector DB   │  │                  │  │  text-embedding-3-small   │ │    │
+│   │  │              │  │  users           │  │  gpt-4o / gpt-4o-mini     │ │    │
+│   │  │ vaultmind-   │  │  departments     │  │  whisper-1 (audio/video)  │ │    │
+│   │  │ huron-{dept} │  │  audit_log       │  └───────────────────────────┘ │    │
+│   │  │ -general     │  │  agent_runs      │                                 │    │
+│   │  │              │  │  document_       │  ┌───────────────────────────┐ │    │
+│   │  │ hr · legal   │  │  versions        │  │   REDIS  (Production)     │ │    │
+│   │  │ finance      │  │  access_requests │  │  Sessions + Rate Limits   │ │    │
+│   │  │ clinical     │  │  feedback_log    │  └───────────────────────────┘ │    │
+│   │  │ operations   │  │  token_blacklist │                                 │    │
+│   │  │ it · mktg    │  └──────────────────┘                                 │    │
+│   │  │ external     │                                                        │    │
+│   │  └──────────────┘                                                        │    │
+│   └──────────────────────────────────────────────────────────────────────────┘    │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Key Features
+## Features
 
-### 🧠 Hybrid LangGraph Intelligence (NEW)
-- **Query Complexity Analysis** - Automatically classifies queries as simple/moderate/complex/very complex
-- **Intelligent Routing** - Fast retrieval for simple queries, LangGraph reasoning for complex ones
-- **Autonomous Agent** - Multi-step reasoning, tool usage, cross-document analysis
-- **Performance Tracking** - Real-time metrics on routing decisions and response times
-- **Sources:** `utils/query_complexity_analyzer.py`, `utils/hybrid_query_orchestrator.py`, `app/utils/langgraph_agent.py`, `tabs/agent_assistant_hybrid.py`
+### AI Agent — Production ReAct Loop
+- **Live SSE streaming** — every reasoning step, tool call, and result streams to the browser in real time
+- **Namespace-enforced tools** — Pinecone access control lives in the tool layer, not the prompt; the LLM cannot override it
+- **Multi-department search** — root and power users search all namespaces simultaneously with `multi_dept_search`
+- **Policy comparison** — structured agreements / conflicts / gaps analysis via GPT-4o-mini JSON mode
+- **Graceful stop** — mid-run cancel with partial summary generation
 
-### 📊 Document Quality Control (NEW)
-- **Automatic Quality Detection** - Identifies missing spaces, OCR errors, concatenated words
-- **Interactive Cleaning** - Preview before/after, standard and aggressive modes
-- **Quality Scoring** - 0-1 scale with actionable recommendations
-- **Batch Processing** - Check multiple documents simultaneously
-- **Sources:** `utils/document_quality_checker.py`, `utils/document_quality_ui.py`
+### Versioned Document Ingestion
+- **All file types** — PDF, DOCX, PPTX, XLSX, CSV, TXT, HTML, JSON, MP4/video (Whisper), MP3/audio (Whisper)
+- **Automatic versioning** — every ingest auto-assigns `doc_id` (slug from filename) and `version` (YYYY-MM)
+- **is_latest filtering** — all queries filter `{"is_latest": {"$eq": True}}` — stale vectors never surface
+- **One-click rollback** — restore any historical version; Pinecone metadata updated atomically
+- **Version history panel** — per-department view with full audit trail, expand per-document history
 
-### 🔍 Hybrid Search & Re-Ranking
-- **Multi-Signal Search** - BM25 keyword + vector similarity + cross-encoder re-ranking
-- **Confidence Thresholding** - Eliminates irrelevant results automatically
-- **Query Enhancement** - Expands queries with synonyms and domain knowledge
-- **Source:** `utils/enterprise_hybrid_search.py`, `utils/query_enhancement.py`
+### RBAC — 4-Tier Role System
+| Role | Permissions |
+|------|-------------|
+| `root` | Full platform access — all departments, admin, cross-dept agent search |
+| `dept_admin` | Manage users in own dept, approve access requests |
+| `power_user` | Cross-department search, analytics, research, agent |
+| `user` | Query, chat, ingest within own department namespace only |
 
-### 🗄️ Multi-Vector Storage
-- **Cloud & Local** - Weaviate (cloud), FAISS (local), or both
-- **Enterprise Adapters** - OpenSearch, Azure AI Search, Vertex AI, Pinecone, Qdrant, PGVector
-- **Migration Tools** - Seamless FAISS ↔ Weaviate migration
-- **Sources:** `utils/multi_vector_storage_interface.py`, `utils/weaviate_manager.py`, `utils/faiss_to_weaviate_migrator.py`
-
-### 🤖 Enhanced LLM Integration
-- **Multi-Provider Support** - OpenAI, Anthropic, Mistral, Groq, Ollama
-- **Structured Outputs** - Executive summaries, analysis, citations, key points
-- **Context Building** - Intelligent chunking (1500/500) with metadata preservation
-- **Fallback Chains** - Automatic provider switching for reliability
-- **Sources:** `utils/enhanced_llm_integration.py`, `utils/llm_config.py`
-
-### 🔒 Enterprise Security & Governance
-- **RBAC** - Role-based access control with feature-level permissions
-- **Approval Workflows** - Request/approval system for elevated access
-- **Audit Logs** - Comprehensive activity tracking
-- **MFA Support** - Two-factor authentication with TOTP
-- **Sources:** `app/auth/enterprise_permissions.py`, `app/auth/resource_request_manager.py`
-
-### 📈 Multi-Content Dashboard
-- **PowerBI Integration** - Embedded reports with Azure AD auth
-- **Excel Analytics** - Multi-sheet viewer with interactive charts
-- **Multi-Source Search** - Unified search across documents, BI, web
-- **Source:** `tabs/multi_content_enhanced.py`
-
-### 📊 Analytics & Monitoring
-- **Performance Metrics** - Query times, routing decisions, success rates
-- **User Feedback System** - Thumbs up/down with detailed feedback forms
-- **Health Dashboards** - Vector store status, LLM availability, system health
-- **Export Capabilities** - CSV, JSON export for analysis
-- **Sources:** `utils/user_feedback_system.py`, `tabs/feedback_analytics_tab.py`
+### Security
+- bcrypt (cost ≥ 12) password hashing — never stored in plaintext
+- JWT with in-memory + SQLite token blacklist — logout immediately invalidates sessions
+- TOTP MFA — Google Authenticator compatible
+- Namespace scope enforced per-request from JWT claims — not from frontend state
+- Rate limiting on all auth endpoints (SlowAPI)
+- Full audit log written on every action
 
 ---
 
-## Quickstart (Local)
+## Tech Stack
 
-### Prerequisites
-- Python 3.9-3.11 (recommended: 3.11)
-- Windows/macOS/Linux
-- Git (for cloning)
-- OpenAI API key (or other LLM provider)
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Next.js 14, React 18, TypeScript 5.3, Tailwind CSS, Radix UI, Framer Motion |
+| Backend | FastAPI 0.115, Uvicorn, Python 3.11 |
+| Vector DB | Pinecone — `text-embedding-3-small` (1536-dim), cosine similarity |
+| LLM | OpenAI GPT-4o / GPT-4o-mini (function calling) |
+| Transcription | OpenAI Whisper-1 — video and audio documents |
+| Auth | PyJWT 2.10, bcrypt 4.2, pyotp 2.9 (TOTP) |
+| Database | SQLite (development) / PostgreSQL 15 (production) |
+| Cache | Redis 7 — production rate-limiting and sessions |
+| Streaming | Server-Sent Events (SSE) — native FastAPI `StreamingResponse` |
+| CI/CD | GitHub Actions — lint, type-check, security scan, Docker build |
+| Deployment | Docker, Azure Container Apps, AWS ECS Fargate |
 
-### Installation (5 minutes)
+---
+
+## Prerequisites
+
+| Requirement | Minimum | Notes |
+|-------------|---------|-------|
+| Python | 3.11+ | Anaconda 3 recommended |
+| Node.js | 18 LTS | |
+| npm | 9+ | |
+| OpenAI API key | — | GPT-4o + embeddings + Whisper |
+| Pinecone API key | — | Free Starter plan supports dev |
+| Git | 2.x | |
+
+---
+
+## Quick Start (Local Development)
+
+### 1. Clone
 
 ```bash
-# 1. Clone repository
-git clone https://github.com/yourusername/vaultmind-genai-assistant
-cd vaultmind-genai-assistant
+git clone https://github.com/bolajil/Huron_GenAI_Knowledge_Assistant.git
+cd Huron_GenAI_Knowledge_Assistant
+```
 
-# 2. Create virtual environment (recommended)
+### 2. Backend — install dependencies
+
+```bash
+cd backend
+
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# 3. Install dependencies
-pip install -r requirements-complete.txt
+# Activate (Windows)
+venv\Scripts\activate
 
-# 4. Configure environment
-cp .env.example .env
-# Edit .env and add your API keys:
-# OPENAI_API_KEY=sk-...
-# WEAVIATE_URL=https://... (optional)
-# WEAVIATE_API_KEY=... (optional)
+# Activate (macOS / Linux)
+source venv/bin/activate
 
-# 5. Run the application
-streamlit run genai_dashboard_modular.py
+# Install core dependencies
+pip install -r requirements_production.txt
+
+# Install optional document parsers (recommended)
+pip install pdfplumber python-docx python-pptx openpyxl
 ```
 
-### First-Time Setup
-
-1. **Access the app:** http://localhost:8501
-2. **Login:** Use default credentials or create new user
-3. **Ingest a document:**
-   - Go to "📄 Ingest Document" tab
-   - Upload a PDF or text file
-   - Wait for processing (automatic quality check included)
-4. **Test queries:**
-   - **Simple:** Go to "🔍 Query Assistant" - fast retrieval
-   - **Complex:** Go to "🧠 Agent (Hybrid)" - LangGraph reasoning
-
-### Verify Installation
+### 3. Configure environment
 
 ```bash
-# Run pre-flight check
-python scripts/demo_preflight_check.py
-
-# Should show:
-# [PASS] Python Version
-# [PASS] All dependencies installed
-# [PASS] Configuration ready
-# [SUCCESS] VaultMind is ready for demo!
+# Copy template
+cp .env.example backend/.env
 ```
 
-### Quick Test
+Open `backend/.env` and fill in:
+
+```env
+OPENAI_API_KEY=sk-...
+PINECONE_API_KEY=pcsk_...
+PINECONE_INDEX=huron-enterprise-knowledge
+JWT_SECRET=your-secret-key-minimum-32-characters-long
+JWT_EXPIRATION_HOURS=8
+# DATABASE_URL=          ← leave blank to use SQLite for development
+```
+
+### 4. Create your Pinecone index (first time only)
+
+```python
+from pinecone import Pinecone, ServerlessSpec
+
+pc = Pinecone(api_key="YOUR_PINECONE_API_KEY")
+pc.create_index(
+    name="huron-enterprise-knowledge",
+    dimension=1536,        # text-embedding-3-small
+    metric="cosine",
+    spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+)
+```
+
+### 5. Start the backend
 
 ```bash
-# Check indexes
-python check_indexes.py
+# From the backend/ directory (with venv active)
+python main.py
 
-# Check configuration
-python check_config.py
+# Output: Uvicorn running on http://0.0.0.0:8004
+# API docs: http://localhost:8004/docs
+```
 
-# Test document quality checker
-python -c "from utils.document_quality_checker import check_document_quality; print('✅ Quality checker ready!')"
+### 6. Frontend — install and configure
+
+```bash
+cd frontend
+npm install
+echo "NEXT_PUBLIC_API_URL=http://localhost:8004" > .env.local
+```
+
+### 7. Start the frontend
+
+```bash
+npm run dev
+# Open: http://localhost:3000
+```
+
+### 8. First login
+
+```
+URL:      http://localhost:3000
+Username: root
+Password: HuronRoot2026!
+```
+
+> Change the root password immediately after first login via Admin → Users.
+
+---
+
+## Environment Variables Reference
+
+```env
+# ── OpenAI ────────────────────────────────────────────────────────────────────
+OPENAI_API_KEY=sk-...              # Required — LLM + embeddings + Whisper
+
+# ── Pinecone ──────────────────────────────────────────────────────────────────
+PINECONE_API_KEY=pcsk_...          # Required
+PINECONE_INDEX=huron-enterprise-knowledge
+
+# ── Database ──────────────────────────────────────────────────────────────────
+DATABASE_URL=                      # Blank = SQLite (dev)
+# Production PostgreSQL:
+# DATABASE_URL=postgresql://huron:password@db.host:5432/huron_db
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+JWT_SECRET=<min-32-char-secret>    # Required
+JWT_EXPIRATION_HOURS=8
+
+# ── Redis (production only) ───────────────────────────────────────────────────
+# REDIS_URL=redis://localhost:6379
+
+# ── Server ────────────────────────────────────────────────────────────────────
+PORT=8004
 ```
 
 ---
 
-## Demo Mode
-Demo Mode is implemented for a one‑click experience with a bundled FAISS index and no external calls.
-Toggle via env: `DEMO_MODE=true`
-Default to FAISS, disable outbound web/API calls in demo
-Preloaded sample index from `template/index_data/test_index/`
-- Toggle via env: `DEMO_MODE=true`
-- Default to FAISS, disable outbound web/API calls in demo
-- Preloaded sample index from `template/index_data/test_index/`
+## Project Structure
 
-You can host a live instance on Streamlit Community Cloud and/or mirror it on Hugging Face Spaces. Links will appear here after deployment.
-
-Quick test locally (PowerShell):
 ```
-$env:DEMO_MODE='true'; streamlit run enhanced_streamlit_app.py
+├── backend/
+│   ├── main.py                      # FastAPI app — all routes, auth, RBAC, DB
+│   ├── agent/
+│   │   ├── react_agent.py           # ReAct loop — OpenAI function calling + SSE
+│   │   └── tools.py                 # Pinecone tools with namespace enforcement
+│   └── utils/
+│       ├── ingestion_service.py     # Versioned multi-format document ingest
+│       └── tenant_context.py        # TenantContext dataclass
+│
+├── frontend/
+│   └── src/
+│       ├── app/dashboard/
+│       │   ├── agent/page.tsx       # AI Agent — live ReAct step streaming
+│       │   ├── chat/page.tsx        # Chat Assistant
+│       │   ├── query/page.tsx       # Query Assistant (RAG)
+│       │   ├── ingest/page.tsx      # Document Ingest + Version History
+│       │   ├── analytics/page.tsx   # Analytics + Feedback
+│       │   ├── admin/               # Admin Panel (users, depts, access requests)
+│       │   └── indexes/page.tsx     # Index Management
+│       ├── components/
+│       │   ├── Auth/Login.tsx       # WebGL glassmorphism login + TOTP MFA
+│       │   ├── Ingestion/DocumentUpload.tsx   # Versioned upload + history panel
+│       │   ├── sidebar.tsx          # RBAC-gated navigation with role badge
+│       │   └── header.tsx           # Namespace badge + async logout
+│       ├── contexts/auth-context.tsx         # JWT state + hasPermission helpers
+│       ├── hooks/useAgentStream.ts           # SSE hook for live agent steps
+│       └── services/api.ts                   # Full typed API client
+│
+├── terraform/
+│   ├── azure/                       # Azure Container Apps deployment
+│   │   ├── providers.tf
+│   │   ├── variables.tf
+│   │   ├── main.tf
+│   │   └── outputs.tf
+│   └── aws/                         # AWS ECS Fargate deployment
+│       ├── providers.tf
+│       ├── variables.tf
+│       ├── main.tf
+│       └── outputs.tf
+│
+├── tests/
+│   ├── test_agent_integration.py
+│   ├── test_agent_search.py
+│   └── test_embeddings.py
+│
+├── config/                          # YAML / JSON configuration files
+├── docs/                            # Technical documentation
+├── requirements_production.txt      # Backend Python dependencies
+├── Dockerfile.production            # Multi-stage production Docker build
+└── .env.example                     # Environment variable template
 ```
 
 ---
 
-## Architecture
+## API Reference
 
-### System Overview
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/auth/login` | POST | — | Username + password → JWT |
+| `/api/v1/auth/mfa/verify` | POST | — | TOTP code → session token |
+| `/api/v1/auth/logout` | POST | JWT | Blacklist token |
+| `/api/v1/auth/me` | GET | JWT | Current user profile |
+| `/api/v1/query` | POST | JWT | RAG query with cited sources |
+| `/api/v1/chat` | POST | JWT | Conversational chat |
+| `/api/v1/ingest` | POST | JWT | Upload + version + index document |
+| `/api/v1/documents/{dept}` | GET | JWT | List latest indexed documents |
+| `/api/v1/documents/{dept}/{id}/versions` | GET | JWT | Full version history |
+| `/api/v1/documents/{dept}/{id}/rollback` | POST | JWT | Restore a version |
+| `/api/v1/documents/{dept}/{id}` | DELETE | JWT | Delete all versions |
+| `/api/v1/agent/run` | POST | JWT | Start ReAct agent run |
+| `/api/v1/agent/stream/{id}` | GET | `?token=` | SSE live step stream |
+| `/api/v1/agent/stop/{id}` | POST | JWT | Stop mid-run |
+| `/api/v1/agent/runs` | GET | JWT | Run history |
+| `/api/v1/admin/users` | GET | JWT (admin) | List all users |
+| `/api/v1/admin/stats` | GET | JWT (admin) | Platform-wide statistics |
+| `/api/v1/access-requests` | POST | JWT | Submit access request |
+| `/health` | GET | — | Backend health check |
 
+Full interactive docs available at `http://localhost:8004/docs` (Swagger UI).
+
+---
+
+## Docker Deployment
+
+Create `docker-compose.yml` at the project root:
+
+```yaml
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../Dockerfile.production
+    ports:
+      - "8004:8004"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - backend_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8004
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  backend_data:
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Streamlit UI Layer                        │
-│  Query │ Chat │ Agent │ Hybrid Agent │ Multi-Content │ Admin │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│              Hybrid Query Orchestrator (NEW)                 │
-│  ┌──────────────────┐         ┌─────────────────────────┐  │
-│  │ Complexity       │  →  →   │ Fast Retrieval          │  │
-│  │ Analyzer         │         │ (Simple queries)        │  │
-│  └──────────────────┘         └─────────────────────────┘  │
-│           ↓                                                  │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ LangGraph Agent (Complex queries)                     │  │
-│  │ • Multi-step reasoning • Tool usage • Synthesis      │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                  Retrieval & Processing                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐  │
-│  │ Document     │  │ Hybrid       │  │ Query           │  │
-│  │ Quality      │→ │ Search       │→ │ Enhancement     │  │
-│  │ Checker (NEW)│  │ + Re-ranking │  │ & Expansion     │  │
-│  └──────────────┘  └──────────────┘  └─────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                   Vector Storage Layer                       │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────┐  │
-│  │ Weaviate │  │  FAISS   │  │OpenSearch│  │ Pinecone  │  │
-│  │ (Cloud)  │  │ (Local)  │  │ Azure AI │  │  Qdrant   │  │
-│  └──────────┘  └──────────┘  └──────────┘  └───────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                      LLM Integration                         │
-│  OpenAI │ Anthropic │ Mistral │ Groq │ Ollama (Local)      │
-└─────────────────────────────────────────────────────────────┘
+
+```bash
+docker compose up --build -d
 ```
 
-### Key Components
+---
 
-**Ingestion Pipeline:**
-1. Document upload (PDF, TXT, DOCX, Excel)
-2. Quality analysis and cleaning (NEW)
-3. Text extraction (pdfplumber, pymupdf, PyPDF2)
-4. Semantic chunking (1500/500 with overlap)
-5. Embedding generation (sentence-transformers)
-6. Vector storage (Weaviate/FAISS/multi-cloud)
+## Cloud Deployment
 
-**Query Pipeline:**
-1. Query complexity analysis (NEW)
-2. Intelligent routing (fast vs LangGraph)
-3. Query enhancement and expansion
-4. Hybrid search (BM25 + vector + re-ranking)
-5. LLM synthesis with citations
-6. Structured response formatting
+Terraform configurations are in `terraform/azure/` and `terraform/aws/`.
 
-**Core Files:**
+### Azure — Container Apps
 
-**NEW - Hybrid Intelligence:**
-- `utils/query_complexity_analyzer.py` - Query classification
-- `utils/hybrid_query_orchestrator.py` - Intelligent routing
-- `app/utils/langgraph_agent.py` - Autonomous agent
-- `tabs/agent_assistant_hybrid.py` - Hybrid UI
+```bash
+cd terraform/azure
 
-**NEW - Document Quality:**
-- `utils/document_quality_checker.py` - Quality analysis
-- `utils/document_quality_ui.py` - Cleaning UI
+# Initialize
+terraform init
 
-**Retrieval & Search:**
-- `utils/enterprise_hybrid_search.py` - Hybrid search
-- `utils/query_enhancement.py` - Query expansion
-- `utils/advanced_reranker.py` - Result re-ranking
-- `utils/unified_document_retrieval.py` - Unified API
+# Preview
+terraform plan -var="openai_api_key=sk-..." \
+               -var="pinecone_api_key=pcsk_..." \
+               -var="jwt_secret=your-secret"
 
-**Vector Storage:**
-- `utils/weaviate_manager.py` - Weaviate integration
-- `utils/multi_vector_storage_interface.py` - Multi-cloud adapters
-- `utils/faiss_to_weaviate_migrator.py` - Migration tools
+# Deploy (approx 8-12 minutes)
+terraform apply
+```
 
-**LLM Integration:**
-- `utils/enhanced_llm_integration.py` - LLM processing
-- `utils/llm_config.py` - Multi-provider config
-- `utils/enterprise_structured_output.py` - Response formatting
+**Resources provisioned:** Resource Group · VNet · Azure Container Registry · Container Apps Environment · Backend Container App · Frontend Container App · PostgreSQL Flexible Server · Azure Cache for Redis · Key Vault · Storage Account · Application Insights
 
-**Security & Auth:**
-- `app/auth/enterprise_permissions.py` - RBAC
-- `app/auth/resource_request_manager.py` - Approvals
-- `app/auth/mfa_manager.py` - Two-factor auth
+### AWS — ECS Fargate
+
+```bash
+cd terraform/aws
+
+terraform init
+
+terraform plan -var="openai_api_key=sk-..." \
+               -var="pinecone_api_key=pcsk_..." \
+               -var="jwt_secret=your-secret" \
+               -var="aws_region=us-east-1"
+
+# Deploy (approx 12-18 minutes)
+terraform apply
+```
+
+**Resources provisioned:** VPC · Subnets · Security Groups · ECR · ECS Cluster · Fargate Services · ALB · RDS PostgreSQL · ElastiCache Redis · Secrets Manager · S3 · CloudFront · CloudWatch · IAM Roles
 
 ---
 
-## Security & Permissions
-- Role‑based access (RBAC) with feature‑level controls
-- Admin approval workflows for elevated features
-- Demo Mode disables outbound calls for safer public testing
+## Migrate SQLite → PostgreSQL (Production)
 
-See also: `SECURITY_CONFIGURATION.md` (coming soon) and `docs/ICP.md` for target org profiles.
+```bash
+# Set your production DATABASE_URL
+export DATABASE_URL=postgresql://huron:password@host:5432/huron_db
 
----
-
-## What's New
-
-### v2.0 (Current) - Hybrid Intelligence Release
-
-✅ **Hybrid LangGraph System**
-- Automatic query complexity analysis
-- Intelligent routing between fast and deep reasoning
-- LangGraph autonomous agent for complex queries
-- Real-time performance metrics
-
-✅ **Document Quality Control**
-- Automatic OCR error detection
-- Interactive cleaning with preview
-- Quality scoring and recommendations
-- Batch processing support
-
-✅ **Publication Ready**
-- Complete demo guide with talk tracks
-- Deployment documentation (local, Docker, cloud)
-- Publishing checklist and 30-minute quick start
-- Pre-flight validation scripts
-
-### v1.5 - Enterprise Features
-- Multi-vector storage adapters (9 providers)
-- Enhanced query system with feedback
-- PowerBI and Excel integration
-- Advanced permissions and RBAC
-
-### v1.0 - Foundation
-- Weaviate and FAISS support
-- Hybrid search with re-ranking
-- Enterprise LLM integration
-- Basic permissions system
-
-## Roadmap
-
-### Q1 2026
-- [ ] Advanced LangGraph workflows
-- [ ] Custom quality rules per document type
-- [ ] Real-time collaboration features
-- [ ] Enhanced analytics dashboard
-
-### Q2 2026
-- [ ] SharePoint, Confluence, Google Drive connectors
-- [ ] SSO/IdP integrations (Azure AD, Okta)
-- [ ] Advanced audit logging
-- [ ] Mobile-responsive UI
-
-### Future
-- [ ] Multi-language support
-- [ ] Voice query interface
-- [ ] Advanced visualization tools
-- [ ] Custom LLM fine-tuning
+# Run migration
+python migrate_sqlite_to_postgres.py
+```
 
 ---
 
-## Documentation
+## Running Tests
 
-### User Guides
-- [📚 Demo Guide](DEMO_GUIDE.md) - Complete demo scenarios (5min, 25min, custom)
-- [📊 Document Quality Guide](DOCUMENT_QUALITY_GUIDE.md) - Fix OCR and text issues
-- [🔧 Hybrid Setup Guide](HYBRID_SETUP_GUIDE.md) - Configure hybrid system
+```bash
+cd backend
+pip install pytest pytest-asyncio pytest-cov
 
-### Deployment
-- [🚀 Deployment Guide](DEPLOYMENT.md) - All deployment options
-- [⚡ Quick Publish](QUICK_PUBLISH.md) - Deploy in 30 minutes
-- [✅ Publishing Checklist](PUBLISH_CHECKLIST.md) - Go-to-market prep
+# Run all tests
+pytest tests/ -v --cov=.
 
-### Development
-- [🏗️ Architecture](docs/architecture.md) - System design (coming soon)
-- [🔌 API Reference](docs/api.md) - Integration guide (coming soon)
-- [🧪 Testing Guide](docs/testing.md) - Test suite (coming soon)
+# Run specific suite
+pytest tests/test_agent_integration.py -v
+```
 
-## Support & Community
+---
 
-### Getting Help
-- 📖 **Documentation:** Check guides above
-- 🐛 **Issues:** [GitHub Issues](https://github.com/yourusername/vaultmind/issues)
-- 💬 **Discussions:** [GitHub Discussions](https://github.com/yourusername/vaultmind/discussions)
-- 📧 **Email:** support@vaultmind.ai
+## Contributing
 
-### Contributing
+1. Fork and create a feature branch: `git checkout -b feature/your-feature`
+2. Follow the code style — no unnecessary comments, no premature abstractions
+3. Verify TypeScript: `cd frontend && npm run build`
+4. Submit a PR against `main`
 
-We welcome contributions! Here's how:
-
-1. **Fork the repository**
-2. **Create a feature branch:** `git checkout -b feature/amazing-feature`
-3. **Make your changes** and test thoroughly
-4. **Commit:** `git commit -m 'Add amazing feature'`
-5. **Push:** `git push origin feature/amazing-feature`
-6. **Open a Pull Request**
-
-**Contribution Guidelines:**
-- Follow existing code style
-- Add tests for new features
-- Update documentation
-- Keep PRs focused and atomic
-
-### Code of Conduct
-
-Be respectful, inclusive, and professional. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for details.
+---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
-Copyright (c) 2025 VaultMind
-
-## Acknowledgments
-
-**Built with:**
-- [Streamlit](https://streamlit.io) - UI framework
-- [LangChain](https://langchain.com) - LLM orchestration
-- [LangGraph](https://langchain-ai.github.io/langgraph/) - Agent framework
-- [Weaviate](https://weaviate.io) - Vector database
-- [FAISS](https://github.com/facebookresearch/faiss) - Local vector search
-- [Sentence Transformers](https://www.sbert.net) - Embeddings
-
-**Special thanks to:**
-- The open-source community
-- Early adopters and testers
-- Contributors and supporters
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Ready to transform your knowledge management?**
-
-[🚀 Get Started](#quickstart-local) | [📖 Read the Docs](#documentation) | [💬 Join Community](#support--community)
-
----
-
-<p align="center">Made with ❤️ for teams who value knowledge</p>
+*FastAPI · Next.js 14 · Pinecone · OpenAI · Terraform · Azure · AWS*
