@@ -72,6 +72,27 @@ export interface DocumentVersion {
   ingested_at:    string;
 }
 
+export interface InternalResult {
+  title:      string;
+  snippet:    string;
+  is_summary?: boolean;
+  dept?:      string;
+}
+
+export interface WebResult {
+  title:   string;
+  url:     string;
+  snippet: string;
+}
+
+export interface ResearchResponse {
+  status:           string;
+  query:            string;
+  internal_results: InternalResult[];
+  web_results:      WebResult[];
+  synthesis:        string;
+}
+
 export interface StatsResponse {
   total_documents: number;
   queries_today: number;
@@ -322,6 +343,29 @@ export const api = {
     return request("/api/v1/chat", {
       method: "POST",
       body: JSON.stringify({ messages, index_name: indexName }),
+    });
+  },
+
+  async research(
+    query: string,
+    options: {
+      use_internal?:    boolean;
+      use_web?:         boolean;
+      use_cross_dept?:  boolean;
+      use_ai_analysis?: boolean;
+      dept?:            string;
+    } = {}
+  ): Promise<ResearchResponse> {
+    return request("/api/v1/research", {
+      method: "POST",
+      body: JSON.stringify({
+        query,
+        use_internal:    options.use_internal    ?? true,
+        use_web:         options.use_web         ?? true,
+        use_cross_dept:  options.use_cross_dept  ?? false,
+        use_ai_analysis: options.use_ai_analysis ?? true,
+        dept:            options.dept,
+      }),
     });
   },
 

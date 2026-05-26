@@ -636,6 +636,15 @@ class AgentRunRequest(BaseModel):
     max_steps: int = 12
 
 
+class ResearchRequest(BaseModel):
+    query:           str
+    use_internal:    bool = True
+    use_web:         bool = True
+    use_cross_dept:  bool = False
+    use_ai_analysis: bool = True
+    dept:            Optional[str] = None
+
+
 # In-memory stores for active agent runs (replace with Redis for multi-worker)
 _active_runs: dict = {}   # run_id → ReActAgent
 _run_steps:   dict = {}   # run_id → list[dict]
@@ -1425,6 +1434,126 @@ async def chat_endpoint(req: ChatRequest, p: dict = Depends(current_user)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/research")
+async def research_endpoint(req: ResearchRequest, p: dict = Depends(current_user)):
+    perm(p, "research")
+    dept = req.dept or p.get("dept_id", "general")
+    dept_gate(p, dept)
+
+    internal_results: list[dict] = []
+    web_results:      list[dict] = []
+    synthesis = ""
+
+    # ── 1. Internal docs via RAG ──────────────────────────────────────────────
+    if req.use_internal:
+        rag = get_rag()
+        if rag:
+            try:
+                from utils.tenant_context import TenantContext
+                ctx = TenantContext(tenant_id="huron", dept_id=dept,
+                                    username=p.get("sub"), role=p.get("role", "user"))
+                res = await rag.query(query=req.query, tenant_context=ctx)
+                if res.get("response"):
+                    internal_results.append({
+                        "title": "Internal Knowledge Summary",
+                        "snippet": res["response"],
+                        "is_summary": True,
+                        "dept": dept,
+                    })
+                for s in res.get("sources", []):
+                    internal_results.append({"title": s, "snippet": "", "dept": dept})
+            except Exception as exc:
+                logger.warning("Research RAG error: %s", exc)
+
+    # ── 2. Cross-dept search ───────────────────────────────────────────────────
+    if req.use_cross_dept and p.get("role") in ("root", "power_user"):
+        rag = get_rag()
+        if rag:
+            cross = [d for d in
+                     ["hr", "finance", "legal", "clinical", "operations", "it", "marketing"]
+                     if d != dept]
+            for xd in cross:
+                try:
+                    from utils.tenant_context import TenantContext
+                    ctx = TenantContext(tenant_id="huron", dept_id=xd,
+                                        username=p.get("sub"), role=p.get("role", "user"))
+                    res = await rag.query(query=req.query, tenant_context=ctx)
+                    for s in res.get("sources", []):
+                        internal_results.append({"title": s, "snippet": "", "dept": xd})
+                except Exception as exc:
+                    logger.debug("Cross-dept %s error: %s", xd, exc)
+
+    # ── 3. Web search ─────────────────────────────────────────────────────────
+    if req.use_web:
+        try:
+            from duckduckgo_search import DDGS
+            def _web_search():
+                with DDGS() as ddgs:
+                    return list(ddgs.text(req.query, max_results=6))
+            results = await asyncio.to_thread(_web_search)
+            web_results = [
+                {
+                    "title":   r.get("title", ""),
+                    "url":     r.get("href", ""),
+                    "snippet": r.get("body", ""),
+                }
+                for r in results
+            ]
+        except Exception as exc:
+            logger.warning("Web search error: %s", exc)
+
+    # ── 4. AI synthesis ───────────────────────────────────────────────────────
+    if req.use_ai_analysis:
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if api_key:
+            try:
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=api_key)
+                parts: list[str] = []
+                if internal_results:
+                    lines = "\n".join(
+                        f"- {r['title']}: {r.get('snippet', '')[:300]}"
+                        for r in internal_results[:6]
+                    )
+                    parts.append(f"INTERNAL SOURCES:\n{lines}")
+                if web_results:
+                    lines = "\n".join(
+                        f"- {r['title']}: {r.get('snippet', '')[:300]}"
+                        for r in web_results[:5]
+                    )
+                    parts.append(f"WEB SOURCES:\n{lines}")
+                context = "\n\n".join(parts) or "No source documents available."
+                prompt = (
+                    "You are a research analyst for Huron VaultMind.\n"
+                    "Synthesize the following research into a professional briefing.\n\n"
+                    f"RESEARCH QUERY: {req.query}\n\n"
+                    f"{context}\n\n"
+                    "Structure your response with:\n"
+                    "**Key Findings** (bullet points)\n"
+                    "**Summary** (2–3 paragraphs)\n"
+                    "**Recommendations**\n\n"
+                    "Cite whether insights come from internal documents or web sources."
+                )
+                resp = await client.chat.completions.create(
+                    model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=1200,
+                    temperature=0.4,
+                )
+                synthesis = resp.choices[0].message.content or ""
+            except Exception as exc:
+                logger.warning("AI synthesis error: %s", exc)
+                synthesis = "AI synthesis unavailable at this time."
+
+    return {
+        "status":           "success",
+        "query":            req.query,
+        "internal_results": internal_results,
+        "web_results":      web_results,
+        "synthesis":        synthesis,
+    }
 
 
 @app.post("/api/v1/ingest")
