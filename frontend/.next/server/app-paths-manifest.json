@@ -1,8 +1,8 @@
 {
-  "/page": "app/page.js",
-  "/mfa/page": "app/mfa/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
   "/dashboard/ingest/page": "app/dashboard/ingest/page.js",
   "/dashboard/agent/page": "app/dashboard/agent/page.js",
-  "/dashboard/page": "app/dashboard/page.js",
-  "/dashboard/indexes/page": "app/dashboard/indexes/page.js"
+  "/dashboard/research/page": "app/dashboard/research/page.js",
+  "/dashboard/indexes/page": "app/dashboard/indexes/page.js",
+  "/dashboard/analytics/page": "app/dashboard/analytics/page.js"
 }
