@@ -14,7 +14,9 @@
 
 ## System Architecture
 
-![Huron GenAI Platform Architecture](assets/architecture.png)
+<p align="center">
+  <img src="assets/architecture.png" alt="Huron GenAI Platform Architecture" width="100%">
+</p>
 
 > 🔍 **Interactive version:** open [`docs/architecture.html`](docs/architecture.html) in your browser for the full styled diagram.
 
