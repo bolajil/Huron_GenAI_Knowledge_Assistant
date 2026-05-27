@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Huron GenAI — Platform Architecture</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0a0d14;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    padding: 40px 24px 60px;
+  }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  .header {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa, #34d399);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .header p {
+    margin-top: 8px;
+    color: #64748b;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  /* ── Diagram wrapper ─────────────────────────────────────── */
+  .diagram {
+    max-width: 1040px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  /* ── Tier card ───────────────────────────────────────────── */
+  .tier {
+    width: 100%;
+    border-radius: 16px;
+    border: 1px solid;
+    padding: 20px 24px;
+    position: relative;
+  }
+  .tier-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    opacity: 0.6;
+  }
+  .tier-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tier-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 20px;
+    opacity: 0.8;
+  }
+
+  /* ── Tier colours ────────────────────────────────────────── */
+  .t-client  { background: #0f1623; border-color: #1e3a5f; }
+  .t-client .tier-label  { color: #60a5fa; }
+  .t-client .tier-title  { color: #93c5fd; }
+  .t-client .tier-badge  { background: #1e3a5f; color: #60a5fa; }
+
+  .t-frontend { background: #0e1420; border-color: #312e81; }
+  .t-frontend .tier-label { color: #818cf8; }
+  .t-frontend .tier-title { color: #a5b4fc; }
+  .t-frontend .tier-badge { background: #1e1b4b; color: #818cf8; }
+
+  .t-api-boundary {
+    background: transparent;
+    border: none;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 32px;
+    height: 44px;
+  }
+
+  .t-backend { background: #0e1a14; border-color: #14532d; }
+  .t-backend .tier-label { color: #4ade80; }
+  .t-backend .tier-title { color: #86efac; }
+  .t-backend .tier-badge { background: #14532d; color: #4ade80; }
+
+  .t-services { background: #130e1a; border-color: #581c87; }
+  .t-services .tier-label { color: #c084fc; }
+  .t-services .tier-title { color: #d8b4fe; }
+
+  .t-data { background: transparent; border: none; padding: 0; }
+
+  /* ── Module chips ────────────────────────────────────────── */
+  .modules {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chip {
+    padding: 7px 13px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .chip-icon { font-size: 13px; }
+
+  /* frontend chips */
+  .t-frontend .chip {
+    background: #1e1b4b;
+    border-color: #3730a3;
+    color: #c7d2fe;
+  }
+
+  /* backend middleware chips */
+  .t-backend .chip {
+    background: #14532d;
+    border-color: #15803d;
+    color: #bbf7d0;
+  }
+  .chip-warning {
+    background: #1c1207 !important;
+    border-color: #854d0e !important;
+    color: #fde68a !important;
+  }
+
+  /* service chips */
+  .t-services .chip {
+    background: #2e1065;
+    border-color: #6d28d9;
+    color: #ddd6fe;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 12px 14px;
+    min-width: 180px;
+    flex: 1;
+  }
+  .chip-subtitle {
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.65;
+    margin-top: 2px;
+    line-height: 1.4;
+  }
+
+  /* routes row */
+  .routes-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid #1f2d1f;
+  }
+  .route-chip {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: #052e16;
+    border: 1px solid #16a34a;
+    color: #4ade80;
+    letter-spacing: 0.3px;
+  }
+
+  /* ── Connector arrows ────────────────────────────────────── */
+  .connector {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    height: 44px;
+    width: 100%;
+  }
+  .arrow-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .arrow-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: #475569;
+  }
+  .arrow-line {
+    width: 2px;
+    height: 20px;
+    position: relative;
+  }
+  .arrow-line::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+  }
+  .arrow-rest .arrow-line { background: #3b82f6; }
+  .arrow-rest .arrow-line::after { border-top: 6px solid #3b82f6; }
+  .arrow-rest .arrow-label { color: #3b82f6; }
+
+  .arrow-sse .arrow-line { background: #8b5cf6; }
+  .arrow-sse .arrow-line::after { border-top: 6px solid #8b5cf6; }
+  .arrow-sse .arrow-label { color: #8b5cf6; }
+
+  .arrow-down .arrow-line { background: #475569; }
+  .arrow-down .arrow-line::after { border-top: 6px solid #475569; }
+
+  /* ── Data stores grid ────────────────────────────────────── */
+  .data-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    width: 100%;
+  }
+  .data-card {
+    border-radius: 14px;
+    border: 1px solid;
+    padding: 16px;
+  }
+  .data-card-icon {
+    font-size: 22px;
+    margin-bottom: 8px;
+  }
+  .data-card-name {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .data-card-desc {
+    font-size: 10px;
+    line-height: 1.5;
+    opacity: 0.6;
+  }
+  .data-card-tag {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+
+  .dc-pinecone { background: #0a0f1e; border-color: #1e3a5f; color: #93c5fd; }
+  .dc-pinecone .data-card-tag { background: #1e3a5f; color: #60a5fa; }
+
+  .dc-db { background: #0c1a0c; border-color: #14532d; color: #86efac; }
+  .dc-db .data-card-tag { background: #14532d; color: #4ade80; }
+
+  .dc-openai { background: #0f0f1a; border-color: #312e81; color: #c7d2fe; }
+  .dc-openai .data-card-tag { background: #1e1b4b; color: #818cf8; }
+
+  .dc-web { background: #1a0f0a; border-color: #7c2d12; color: #fed7aa; }
+  .dc-web .data-card-tag { background: #7c2d12; color: #fdba74; }
+
+  /* ── Client single box ───────────────────────────────────── */
+  .client-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .client-icon {
+    font-size: 28px;
+  }
+  .client-text h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #93c5fd;
+  }
+  .client-text p {
+    font-size: 12px;
+    color: #475569;
+    margin-top: 2px;
+  }
+
+  /* ── Footer legend ───────────────────────────────────────── */
+  .legend {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    margin-top: 40px;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #64748b;
+  }
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Huron GenAI — Platform Architecture</h1>
+  <p>Full-stack Knowledge Intelligence System · v3 RBAC</p>
+</div>
+
+<div class="diagram">
+
+  <!-- ① BROWSER CLIENT ─────────────────────────────────── -->
+  <div class="tier t-client" style="width:100%">
+    <div class="tier-label">Tier 1</div>
+    <div class="client-box">
+      <div class="client-icon">🌐</div>
+      <div class="client-text">
+        <h3>Browser Client</h3>
+        <p>Any modern browser · Auth via JWT stored in localStorage · EventSource for SSE streams</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow down -->
+  <div class="connector">
+    <div class="arrow-group arrow-down">
+      <div class="arrow-label">HTTPS</div>
+      <div class="arrow-line"></div>
+    </div>
+  </div>
+
+  <!-- ② NEXT.JS FRONTEND ───────────────────────────────── -->
+  <div class="tier t-frontend">
+    <div class="tier-label">Tier 2</div>
+    <div class="tier-title">
+      ⚛ Next.js 14 App Router — Frontend
+      <span class="tier-badge">Port 3000</span>
+    </div>
+    <div class="modules">
+      <div class="chip"><span class="chip-icon">🔐</span> Login + MFA</div>
+      <div class="chip"><span class="chip-icon">📊</span> Dashboard + Stats</div>
+      <div class="chip"><span class="chip-icon">💬</span> Chat Assistant</div>
+      <div class="chip"><span class="chip-icon">🔍</span> Query Assistant</div>
+      <div class="chip"><span class="chip-icon">🤖</span> Agent Assistant</div>
+      <div class="chip"><span class="chip-icon">🔬</span> Enhanced Research</div>
+      <div class="chip"><span class="chip-icon">📄</span> Document Ingest</div>
+      <div class="chip"><span class="chip-icon">🗂</span> Index Management</div>
+      <div class="chip"><span class="chip-icon">📈</span> Analytics + Audit</div>
+      <div class="chip"><span class="chip-icon">🛡</span> Admin Panel</div>
+      <div class="chip"><span class="chip-icon">👥</span> User Management</div>
+      <div class="chip"><span class="chip-icon">📬</span> Access Requests</div>
+    </div>
+  </div>
+
+  <!-- Arrow: REST + SSE -->
+  <div class="connector">
+    <div class="arrow-group arrow-rest">
+      <div class="arrow-label">REST API</div>
+      <div class="arrow-line"></div>
+    </div>
+    <div class="arrow-group arrow-sse">
+      <div class="arrow-label">SSE Stream</div>
+      <div class="arrow-line"></div>
+    </div>
+  </div>
+
+  <!-- ③ FASTAPI BACKEND ────────────────────────────────── -->
+  <div class="tier t-backend">
+    <div class="tier-label">Tier 3</div>
+    <div class="tier-title">
+      ⚡ FastAPI Backend
+      <span class="tier-badge">Port 8004</span>
+    </div>
+
+    <!-- Security middleware row -->
+    <div class="modules">
+      <div class="chip">🔑 JWT Auth + TOTP MFA</div>
+      <div class="chip">🛡 RBAC Gate — 4 Tiers<br><span style="font-size:10px;opacity:.6">root · dept_admin · power_user · user</span></div>
+      <div class="chip">📋 Audit Log — All Actions</div>
+      <div class="chip chip-warning">🚦 Rate Limiting (SlowAPI)</div>
+      <div class="chip chip-warning">⚡ Redis Sessions<br><span style="font-size:10px;opacity:.6">production only</span></div>
+    </div>
+
+    <!-- API routes row -->
+    <div class="routes-row">
+      <span style="font-size:11px;color:#475569;margin-right:4px;align-self:center">ROUTES →</span>
+      <span class="route-chip">/auth</span>
+      <span class="route-chip">/query</span>
+      <span class="route-chip">/chat</span>
+      <span class="route-chip">/research</span>
+      <span class="route-chip">/agent/run</span>
+      <span class="route-chip">/agent/stream</span>
+      <span class="route-chip">/ingest</span>
+      <span class="route-chip">/documents</span>
+      <span class="route-chip">/admin</span>
+      <span class="route-chip">/root</span>
+      <span class="route-chip">/feedback</span>
+      <span class="route-chip">/access-requests</span>
+      <span class="route-chip">/indexes</span>
+    </div>
+  </div>
+
+  <!-- Arrow down -->
+  <div class="connector">
+    <div class="arrow-group arrow-down">
+      <div class="arrow-label">Internal calls</div>
+      <div class="arrow-line"></div>
+    </div>
+  </div>
+
+  <!-- ④ SERVICE LAYER ──────────────────────────────────── -->
+  <div class="tier t-services">
+    <div class="tier-label">Tier 4 — Service Layer</div>
+    <div class="tier-title">⚙ Core AI Services</div>
+    <div class="modules" style="gap:12px">
+      <div class="chip">
+        <div>
+          🤖 ReAct Agent
+          <div class="chip-subtitle">
+            OpenAI function calling · SSE step streaming<br>
+            Tool use: RAG, web, calculator, code
+          </div>
+        </div>
+      </div>
+      <div class="chip">
+        <div>
+          🧠 RAG Orchestrator
+          <div class="chip-subtitle">
+            Pinecone similarity search · is_latest filter<br>
+            Source Guard faithfulness scoring
+          </div>
+        </div>
+      </div>
+      <div class="chip">
+        <div>
+          📦 Versioned Ingestion
+          <div class="chip-subtitle">
+            PDF · DOCX · PPTX · XLSX · CSV · JSON<br>
+            MP4 / MP3 via Whisper · doc_id + version tracking
+          </div>
+        </div>
+      </div>
+      <div class="chip">
+        <div>
+          🔬 Research Engine
+          <div class="chip-subtitle">
+            Internal RAG + web search (DuckDuckGo)<br>
+            Cross-dept search · GPT-4o synthesis
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow down -->
+  <div class="connector">
+    <div class="arrow-group arrow-down">
+      <div class="arrow-label">Read / Write</div>
+      <div class="arrow-line"></div>
+    </div>
+  </div>
+
+  <!-- ⑤ DATA STORES ────────────────────────────────────── -->
+  <div class="tier t-data">
+    <div class="data-grid">
+
+      <div class="data-card dc-pinecone">
+        <div class="data-card-icon">🌲</div>
+        <div class="data-card-name">Pinecone Vector DB</div>
+        <div class="data-card-desc">
+          Namespace-isolated per department<br>
+          is_latest metadata filter<br>
+          Versioned chunk IDs<br>
+          text-embedding-3-small
+        </div>
+        <span class="data-card-tag">External · Cloud</span>
+      </div>
+
+      <div class="data-card dc-db">
+        <div class="data-card-icon">🗄</div>
+        <div class="data-card-name">SQLite / PostgreSQL</div>
+        <div class="data-card-desc">
+          users · departments · roles<br>
+          query_log · audit_log<br>
+          document_versions · feedback<br>
+          agent_runs · access_requests
+        </div>
+        <span class="data-card-tag">Local dev / Prod</span>
+      </div>
+
+      <div class="data-card dc-openai">
+        <div class="data-card-icon">✨</div>
+        <div class="data-card-name">OpenAI APIs</div>
+        <div class="data-card-desc">
+          GPT-4o · gpt-4o-mini<br>
+          text-embedding-3-small<br>
+          Whisper-1 (audio/video)<br>
+          Function calling / tools
+        </div>
+        <span class="data-card-tag">External · API key</span>
+      </div>
+
+      <div class="data-card dc-web">
+        <div class="data-card-icon">🌍</div>
+        <div class="data-card-name">External Sources</div>
+        <div class="data-card-desc">
+          DuckDuckGo Search (DDGS)<br>
+          Web augmentation for<br>
+          Enhanced Research tab<br>
+          No API key required
+        </div>
+        <span class="data-card-tag">Web · Open</span>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#3b82f6"></div>
+    REST API (JSON over HTTP)
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#8b5cf6"></div>
+    SSE Stream (Agent live steps)
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#4ade80"></div>
+    FastAPI / Python backend
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#818cf8"></div>
+    Next.js 14 frontend pages
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#f59e0b"></div>
+    Production-only dependency
+  </div>
+</div>
+
+</body>
+</html>
