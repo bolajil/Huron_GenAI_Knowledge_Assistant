@@ -14,6 +14,13 @@
 
 ## System Architecture
 
+![Huron GenAI Platform Architecture](assets/architecture.png)
+
+> 🔍 **Interactive version:** open [`docs/architecture.html`](docs/architecture.html) in your browser for the full styled diagram.
+
+<details>
+<summary>Text diagram (ASCII fallback)</summary>
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          HURON GENAI PLATFORM                               │
@@ -72,6 +79,8 @@
 │   └──────────────────────────────────────────────────────────────────────────┘    │
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+</details>
 
 ---
 
