@@ -72,6 +72,24 @@ export interface DocumentVersion {
   ingested_at:    string;
 }
 
+export interface Conversation {
+  id:         string;
+  title:      string;
+  tab:        string;
+  dept:       string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationMessage {
+  id:           number;
+  role:         "user" | "assistant" | "system";
+  content:      string;
+  source?:      string;
+  source_label?: string;
+  created_at:   string;
+}
+
 export interface InternalResult {
   title:      string;
   snippet:    string;
@@ -344,6 +362,41 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ messages, index_name: indexName }),
     });
+  },
+
+  // ── Conversation Memory ──────────────────────────────────────────────────────
+
+  async createConversation(tab: string, dept?: string): Promise<Conversation> {
+    return request("/api/v1/conversations", {
+      method: "POST",
+      body: JSON.stringify({ tab, dept, title: "New Conversation" }),
+    });
+  },
+
+  async listConversations(tab?: string): Promise<{ conversations: Conversation[] }> {
+    const qs = tab ? `?tab=${tab}` : "";
+    return request(`/api/v1/conversations${qs}`);
+  },
+
+  async getMessages(convId: string): Promise<{ conversation_id: string; messages: ConversationMessage[] }> {
+    return request(`/api/v1/conversations/${convId}/messages`);
+  },
+
+  async appendMessage(
+    convId: string,
+    role: "user" | "assistant",
+    content: string,
+    source?: string,
+    sourceLabel?: string,
+  ): Promise<{ status: string }> {
+    return request(`/api/v1/conversations/${convId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ role, content, source, source_label: sourceLabel }),
+    });
+  },
+
+  async deleteConversation(convId: string): Promise<{ status: string }> {
+    return request(`/api/v1/conversations/${convId}`, { method: "DELETE" });
   },
 
   async research(

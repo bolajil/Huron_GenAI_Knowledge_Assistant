@@ -26,15 +26,15 @@
       "static/chunks/main-app.js",
       "static/chunks/app/dashboard/layout.js"
     ],
-    "/dashboard/ingest/page": [
+    "/dashboard/chat/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/dashboard/ingest/page.js"
+      "static/chunks/app/dashboard/chat/page.js"
     ],
-    "/dashboard/indexes/page": [
+    "/dashboard/query/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/dashboard/indexes/page.js"
+      "static/chunks/app/dashboard/query/page.js"
     ],
     "/dashboard/agent/page": [
       "static/chunks/webpack.js",
@@ -46,40 +46,15 @@
       "static/chunks/main-app.js",
       "static/chunks/app/dashboard/research/page.js"
     ],
-    "/dashboard/analytics/page": [
+    "/dashboard/indexes/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/dashboard/analytics/page.js"
+      "static/chunks/app/dashboard/indexes/page.js"
     ],
-    "/dashboard/admin/departments/page": [
+    "/dashboard/ingest/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/dashboard/admin/departments/page.js"
-    ],
-    "/dashboard/admin/users/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/dashboard/admin/users/page.js"
-    ],
-    "/dashboard/admin/access-requests/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/dashboard/admin/access-requests/page.js"
-    ],
-    "/dashboard/admin/security/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/dashboard/admin/security/page.js"
-    ],
-    "/dashboard/chat/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/dashboard/chat/page.js"
-    ],
-    "/dashboard/query/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/dashboard/query/page.js"
+      "static/chunks/app/dashboard/ingest/page.js"
     ]
   }
 }

@@ -12,9 +12,12 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  Clock,
+  ChevronLeft,
+  Trash2,
 } from "lucide-react";
-import { useState } from "react";
-import { api, InternalResult, WebResult } from "@/services/api";
+import { useState, useEffect, useCallback } from "react";
+import { api, InternalResult, WebResult, Conversation } from "@/services/api";
 import { useAuth } from "@/contexts/auth-context";
 
 export default function EnhancedResearchPage() {
@@ -38,6 +41,24 @@ export default function EnhancedResearchPage() {
 
   // Collapse state for internal source snippets
   const [expandedInternal, setExpandedInternal] = useState<Set<number>>(new Set());
+
+  // History sidebar
+  const [history, setHistory]           = useState<Conversation[]>([]);
+  const [historyOpen, setHistoryOpen]   = useState(true);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const { conversations } = await api.listConversations("research");
+      setHistory(conversations);
+    } catch {
+      // non-critical
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const canCrossDept =
     user?.role === "root" || user?.role === "power_user" || user?.role === "dept_admin";
@@ -64,10 +85,54 @@ export default function EnhancedResearchPage() {
       setWebResults(res.web_results ?? []);
       setSynthesis(res.synthesis ?? "");
       setHasResults(true);
+
+      // Persist — fire and forget
+      if (res.synthesis) {
+        saveToHistory(query.trim(), res.synthesis).catch(() => {});
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Research failed. Please try again.");
     } finally {
       setIsResearching(false);
+    }
+  };
+
+  const saveToHistory = async (q: string, synth: string) => {
+    try {
+      const conv = await api.createConversation("research", user?.department);
+      await api.appendMessage(conv.id, "user", q);
+      await api.appendMessage(conv.id, "assistant", synth);
+      const { conversations } = await api.listConversations("research");
+      setHistory(conversations);
+    } catch {
+      // non-critical
+    }
+  };
+
+  const loadHistoryItem = async (conv: Conversation) => {
+    try {
+      const { messages } = await api.getMessages(conv.id);
+      const userMsg      = messages.find((m) => m.role === "user");
+      const assistantMsg = messages.find((m) => m.role === "assistant");
+      if (!userMsg || !assistantMsg) return;
+      setQuery(userMsg.content);
+      setSynthesis(assistantMsg.content);
+      setInternalResults([]);
+      setWebResults([]);
+      setHasResults(true);
+      setError(null);
+    } catch {
+      setError("Failed to load research history item.");
+    }
+  };
+
+  const deleteHistoryItem = async (e: React.MouseEvent, convId: string) => {
+    e.stopPropagation();
+    try {
+      await api.deleteConversation(convId);
+      setHistory((prev) => prev.filter((c) => c.id !== convId));
+    } catch {
+      // ignore
     }
   };
 
@@ -80,7 +145,66 @@ export default function EnhancedResearchPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="flex gap-4">
+      {/* History sidebar */}
+      <div className={`flex-shrink-0 transition-all duration-200 ${historyOpen ? "w-60" : "w-10"}`}>
+        {historyOpen ? (
+          <div className="rounded-xl border border-border bg-card flex flex-col max-h-[calc(100vh-10rem)]">
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+              <div className="flex items-center gap-1.5 text-sm font-medium">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                Research History
+              </div>
+              <button
+                onClick={() => setHistoryOpen(false)}
+                className="p-1 rounded hover:bg-accent text-muted-foreground"
+                title="Collapse"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {loadingHistory ? (
+                <div className="flex justify-center py-4">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : history.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4 px-2">
+                  No saved research yet
+                </p>
+              ) : (
+                history.map((conv) => (
+                  <button
+                    key={conv.id}
+                    onClick={() => loadHistoryItem(conv)}
+                    className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-accent text-xs group flex items-start justify-between gap-1 transition-colors"
+                  >
+                    <span className="line-clamp-2 text-foreground/80 leading-relaxed">{conv.title}</span>
+                    <button
+                      onClick={(e) => deleteHistoryItem(e, conv.id)}
+                      className="opacity-0 group-hover:opacity-100 shrink-0 p-0.5 rounded hover:text-destructive transition-all"
+                      title="Delete"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setHistoryOpen(true)}
+            className="w-10 h-10 flex items-center justify-center rounded-xl border border-border bg-card hover:bg-accent text-muted-foreground"
+            title="Show research history"
+          >
+            <Clock className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 space-y-6 min-w-0">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-3">
@@ -338,6 +462,7 @@ export default function EnhancedResearchPage() {
           </p>
         </div>
       )}
+      </div>{/* end main content */}
     </div>
   );
 }
