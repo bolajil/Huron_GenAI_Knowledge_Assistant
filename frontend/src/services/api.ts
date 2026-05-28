@@ -155,6 +155,19 @@ export interface IndexInfo {
   department?: string;
 }
 
+export interface DocumentVersionEvent {
+  dept:        string;
+  dept_name:   string | null;
+  doc_id:      string;
+  version:     string;
+  source_file: string;
+  file_type:   string;
+  chunk_count: number;
+  is_latest:   boolean;
+  ingested_by: string;
+  ingested_at: string;
+}
+
 export interface AccessRequest {
   id: number;
   requester_id: number;
@@ -446,6 +459,10 @@ export const api = {
       throw new Error(err.detail || "Upload failed");
     }
     return response.json();
+  },
+
+  async getRecentDocumentVersions(limit = 30): Promise<{ versions: DocumentVersionEvent[] }> {
+    return request(`/api/v1/documents/recent?limit=${limit}`);
   },
 
   async listDocuments(dept: string): Promise<{ dept: string; documents: DocumentSummary[] }> {
