@@ -232,12 +232,57 @@ def _ensure_pg_doc_versions_table():
         logger.warning("Could not ensure document_versions table: %s", exc)
 
 
+def _ensure_pg_conversations_tables():
+    """Create conversations + conversation_messages tables in PostgreSQL if missing."""
+    if not DATABASE_URL:
+        return
+    try:
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id         TEXT PRIMARY KEY,
+                user_id    INTEGER NOT NULL,
+                dept       TEXT NOT NULL DEFAULT 'general',
+                tab        TEXT NOT NULL DEFAULT 'chat',
+                title      TEXT NOT NULL DEFAULT 'New Conversation',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS conversation_messages (
+                id              SERIAL PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                role            TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+                content         TEXT NOT NULL,
+                source          TEXT,
+                source_label    TEXT,
+                created_at      TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_conv_user
+            ON conversations(user_id, updated_at DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_conv_msg
+            ON conversation_messages(conversation_id, created_at ASC)
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logger.warning("Could not ensure conversations tables: %s", exc)
+
+
 def init_db():
     if DATABASE_URL:
         _seed_db()
         _ensure_pg_feedback_table()
         _ensure_pg_agent_runs_table()
         _ensure_pg_doc_versions_table()
+        _ensure_pg_conversations_tables()
         return
 
     conn = sqlite3.connect(DB_PATH)
@@ -371,6 +416,40 @@ def init_db():
             ingested_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(dept, doc_id, version)
         )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id         TEXT PRIMARY KEY,
+            user_id    INTEGER NOT NULL,
+            dept       TEXT NOT NULL DEFAULT 'general',
+            tab        TEXT NOT NULL DEFAULT 'chat',
+            title      TEXT NOT NULL DEFAULT 'New Conversation',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            role            TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+            content         TEXT NOT NULL,
+            source          TEXT,
+            source_label    TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_conv_user
+        ON conversations(user_id, updated_at DESC)
+    """)
+
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_conv_msg
+        ON conversation_messages(conversation_id, created_at ASC)
     """)
 
     conn.commit()
@@ -643,6 +722,47 @@ class ResearchRequest(BaseModel):
     use_cross_dept:  bool = False
     use_ai_analysis: bool = True
     dept:            Optional[str] = None
+
+
+class ConversationCreate(BaseModel):
+    tab:   str = "chat"        # "chat" | "query" | "agent"
+    dept:  Optional[str] = None
+    title: str = "New Conversation"
+
+
+class MessageAppend(BaseModel):
+    role:         str            # "user" | "assistant"
+    content:      str
+    source:       Optional[str] = None
+    source_label: Optional[str] = None
+
+
+# ─── Simple in-memory query-result cache ─────────────────────────────────────
+import hashlib as _hashlib, time as _time
+
+_query_cache: dict = {}          # key → {"result": ..., "expires": float}
+CACHE_TTL_SECONDS = 300          # 5 minutes
+
+
+def _cache_key(dept: str, query: str) -> str:
+    return _hashlib.sha256(f"{dept}:{query.strip().lower()}".encode()).hexdigest()[:16]
+
+
+def _cache_get(dept: str, query: str):
+    entry = _query_cache.get(_cache_key(dept, query))
+    if entry and entry["expires"] > _time.time():
+        return entry["result"]
+    return None
+
+
+def _cache_set(dept: str, query: str, result: dict):
+    if len(_query_cache) > 500:          # cap size in dev
+        oldest = min(_query_cache, key=lambda k: _query_cache[k]["expires"])
+        _query_cache.pop(oldest, None)
+    _query_cache[_cache_key(dept, query)] = {
+        "result":  result,
+        "expires": _time.time() + CACHE_TTL_SECONDS,
+    }
 
 
 # In-memory stores for active agent runs (replace with Redis for multi-worker)
@@ -1388,6 +1508,12 @@ async def query_endpoint(req: QueryRequest, p: dict = Depends(current_user)):
             "source_label": fb.get("source_label", ""),
         }
 
+    # ── Cache check ───────────────────────────────────────────────────────────
+    cached = _cache_get(dept, req.query)
+    if cached:
+        logger.debug("Query cache hit: dept=%s", dept)
+        return {**cached, "cache_hit": True}
+
     t0 = time.time()
     try:
         from utils.tenant_context import TenantContext
@@ -1399,7 +1525,7 @@ async def query_endpoint(req: QueryRequest, p: dict = Depends(current_user)):
         faith   = result.get("faithfulness_score")
         log_query(p.get("user_id", 0), dept, req.query, elapsed, faith or 0, len(sources))
         guard   = await _source_guard(req.query, result.get("response", ""), sources, faith)
-        return {
+        payload = {
             "status":             "success",
             "query":              req.query,
             "results":            result.get("response", ""),
@@ -1410,6 +1536,8 @@ async def query_endpoint(req: QueryRequest, p: dict = Depends(current_user)):
             "faithfulness_score": faith,
             "processing_time_ms": elapsed,
         }
+        _cache_set(dept, req.query, payload)
+        return payload
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1496,20 +1624,56 @@ async def research_endpoint(req: ResearchRequest, p: dict = Depends(current_user
 
     # ── 3. Web search ─────────────────────────────────────────────────────────
     if req.use_web:
+        # Try DuckDuckGo first; fall back to Wikipedia if it returns nothing.
+        def _ddgs_search() -> list[dict]:
+            try:
+                from duckduckgo_search import DDGS
+                with DDGS(timeout=10) as ddgs:
+                    raw = list(ddgs.text(req.query, max_results=6))
+                return [
+                    {"title": r.get("title",""), "url": r.get("href",""), "snippet": r.get("body","")}
+                    for r in raw
+                ]
+            except Exception as exc:
+                logger.debug("DDGS search unavailable: %s", exc)
+                return []
+
+        def _wiki_search() -> list[dict]:
+            import urllib.request as _req
+            import urllib.parse as _parse
+            import json as _json
+            params = _parse.urlencode({
+                "action": "query", "list": "search",
+                "srsearch": req.query, "srlimit": 6,
+                "format": "json", "srprop": "snippet",
+            })
+            url = f"https://en.wikipedia.org/w/api.php?{params}"
+            request = _req.Request(url, headers={"User-Agent": "HuronResearch/1.0"})
+            with _req.urlopen(request, timeout=10) as resp:
+                data = _json.loads(resp.read())
+            results = []
+            for item in data.get("query", {}).get("search", []):
+                title   = item.get("title", "")
+                snippet = item.get("snippet", "")
+                # strip Wikipedia highlight markup
+                for tag in ('<span class="searchmatch">', '</span>'):
+                    snippet = snippet.replace(tag, "")
+                import urllib.parse as _p
+                results.append({
+                    "title":   title,
+                    "url":     f"https://en.wikipedia.org/wiki/{_p.quote(title.replace(' ','_'))}",
+                    "snippet": snippet,
+                })
+            return results
+
         try:
-            from duckduckgo_search import DDGS
-            def _web_search():
-                with DDGS() as ddgs:
-                    return list(ddgs.text(req.query, max_results=6))
-            results = await asyncio.to_thread(_web_search)
-            web_results = [
-                {
-                    "title":   r.get("title", ""),
-                    "url":     r.get("href", ""),
-                    "snippet": r.get("body", ""),
-                }
-                for r in results
-            ]
+            ddgs_results = await asyncio.to_thread(_ddgs_search)
+            if ddgs_results:
+                web_results = ddgs_results
+                logger.debug("Web search: %d results via DuckDuckGo", len(web_results))
+            else:
+                web_results = await asyncio.to_thread(_wiki_search)
+                logger.debug("Web search: %d results via Wikipedia fallback", len(web_results))
         except Exception as exc:
             logger.warning("Web search error: %s", exc)
 
@@ -1563,6 +1727,121 @@ async def research_endpoint(req: ResearchRequest, p: dict = Depends(current_user
         "web_results":      web_results,
         "synthesis":        synthesis,
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CONVERSATION MEMORY
+# ═════════════════════════════════════════════════════════════════════════════
+
+import uuid as _uuid
+
+
+def _auto_title(first_message: str) -> str:
+    """Generate a conversation title from the first user message."""
+    words = first_message.strip().split()
+    return " ".join(words[:8]) + ("…" if len(words) > 8 else "")
+
+
+@app.post("/api/v1/conversations")
+async def create_conversation(req: ConversationCreate, p: dict = Depends(current_user)):
+    perm(p, "chat")
+    conv_id = str(_uuid.uuid4())
+    dept    = req.dept or p.get("dept_id", "general")
+    with db_conn() as conn:
+        conn.execute(
+            "INSERT INTO conversations (id, user_id, dept, tab, title) VALUES (?,?,?,?,?)",
+            (conv_id, p["user_id"], dept, req.tab, req.title),
+        )
+        conn.commit()
+    return {"id": conv_id, "title": req.title, "tab": req.tab, "dept": dept}
+
+
+@app.get("/api/v1/conversations")
+async def list_conversations(tab: Optional[str] = None, p: dict = Depends(current_user)):
+    perm(p, "chat")
+    with db_conn() as conn:
+        if tab:
+            rows = conn.execute(
+                "SELECT id, title, tab, dept, created_at, updated_at "
+                "FROM conversations WHERE user_id=? AND tab=? "
+                "ORDER BY updated_at DESC LIMIT 50",
+                (p["user_id"], tab),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, title, tab, dept, created_at, updated_at "
+                "FROM conversations WHERE user_id=? "
+                "ORDER BY updated_at DESC LIMIT 50",
+                (p["user_id"],),
+            ).fetchall()
+    return {"conversations": [dict(r) for r in rows]}
+
+
+@app.get("/api/v1/conversations/{conv_id}/messages")
+async def get_conversation_messages(conv_id: str, p: dict = Depends(current_user)):
+    perm(p, "chat")
+    with db_conn() as conn:
+        conv = conn.execute(
+            "SELECT user_id FROM conversations WHERE id=?", (conv_id,)
+        ).fetchone()
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if conv["user_id"] != p["user_id"] and p.get("role") != "root":
+            raise HTTPException(status_code=403, detail="Access denied")
+        rows = conn.execute(
+            "SELECT id, role, content, source, source_label, created_at "
+            "FROM conversation_messages WHERE conversation_id=? "
+            "ORDER BY created_at ASC",
+            (conv_id,),
+        ).fetchall()
+    return {"conversation_id": conv_id, "messages": [dict(r) for r in rows]}
+
+
+@app.post("/api/v1/conversations/{conv_id}/messages")
+async def append_message(conv_id: str, req: MessageAppend, p: dict = Depends(current_user)):
+    perm(p, "chat")
+    with db_conn() as conn:
+        conv = conn.execute(
+            "SELECT user_id, title FROM conversations WHERE id=?", (conv_id,)
+        ).fetchone()
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if conv["user_id"] != p["user_id"] and p.get("role") != "root":
+            raise HTTPException(status_code=403, detail="Access denied")
+        conn.execute(
+            "INSERT INTO conversation_messages "
+            "(conversation_id, role, content, source, source_label) VALUES (?,?,?,?,?)",
+            (conv_id, req.role, req.content, req.source, req.source_label),
+        )
+        # Auto-set title from first user message
+        if req.role == "user" and conv["title"] in ("New Conversation", ""):
+            conn.execute(
+                "UPDATE conversations SET title=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (_auto_title(req.content), conv_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (conv_id,),
+            )
+        conn.commit()
+    return {"status": "ok"}
+
+
+@app.delete("/api/v1/conversations/{conv_id}")
+async def delete_conversation(conv_id: str, p: dict = Depends(current_user)):
+    perm(p, "chat")
+    with db_conn() as conn:
+        conv = conn.execute(
+            "SELECT user_id FROM conversations WHERE id=?", (conv_id,)
+        ).fetchone()
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if conv["user_id"] != p["user_id"] and p.get("role") != "root":
+            raise HTTPException(status_code=403, detail="Access denied")
+        conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+        conn.commit()
+    return {"status": "deleted"}
 
 
 @app.post("/api/v1/ingest")

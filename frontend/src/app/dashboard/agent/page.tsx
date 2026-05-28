@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Bot, Play, Square, Search, GitCompare,
   Shield, CheckCircle, AlertTriangle, Clock,
+  ChevronLeft, Trash2, Loader2,
 } from "lucide-react";
 import { useAuth } from "../../../contexts/auth-context";
 import { useAgentStream, type AgentStep } from "../../../hooks/useAgentStream";
+import { api, type Conversation } from "../../../services/api";
 
 const DEPT_OPTIONS = [
   { code: "hr",         label: "Human Resources" },
@@ -162,6 +164,62 @@ export default function AgentPage() {
   const [model,    setModel]    = useState("gpt-4o-mini");
   const [maxSteps, setMaxSteps] = useState(12);
 
+  // History sidebar
+  const [history, setHistory]               = useState<Conversation[]>([]);
+  const [historyOpen, setHistoryOpen]       = useState(true);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const { conversations } = await api.listConversations("agent");
+      setHistory(conversations);
+    } catch {
+      // non-critical
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  // Save completed run to conversation history
+  useEffect(() => {
+    if (status === "complete" && answer && query.trim()) {
+      (async () => {
+        try {
+          const conv = await api.createConversation("agent", user?.department);
+          await api.appendMessage(conv.id, "user", query);
+          await api.appendMessage(conv.id, "assistant", answer);
+          const { conversations } = await api.listConversations("agent");
+          setHistory(conversations);
+        } catch {
+          // non-critical
+        }
+      })();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  const loadHistoryItem = async (conv: Conversation) => {
+    try {
+      const { messages } = await api.getMessages(conv.id);
+      const userMsg = messages.find((m) => m.role === "user");
+      if (userMsg) setQuery(userMsg.content);
+    } catch {
+      // ignore
+    }
+  };
+
+  const deleteHistoryItem = async (e: React.MouseEvent, convId: string) => {
+    e.stopPropagation();
+    try {
+      await api.deleteConversation(convId);
+      setHistory((prev) => prev.filter((c) => c.id !== convId));
+    } catch {
+      // ignore
+    }
+  };
+
   const canCrossDept = hasPermission("cross_dept_query");
   const canRun       = hasPermission("agent") && query.trim().length > 0 && status !== "running";
 
@@ -175,7 +233,64 @@ export default function AgentPage() {
   }[status];
 
   return (
-    <div className="flex gap-6 h-[calc(100vh-8rem)]">
+    <div className="flex gap-3 h-[calc(100vh-8rem)]">
+
+      {/* ── History sidebar ────────────────────────────────────────── */}
+      <div className={`flex-shrink-0 transition-all duration-200 ${historyOpen ? "w-56" : "w-10"}`}>
+        {historyOpen ? (
+          <div className="rounded-xl border border-border bg-card flex flex-col h-full">
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+              <div className="flex items-center gap-1.5 text-sm font-medium">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                Run History
+              </div>
+              <button
+                onClick={() => setHistoryOpen(false)}
+                className="p-1 rounded hover:bg-accent text-muted-foreground"
+                title="Collapse"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {loadingHistory ? (
+                <div className="flex justify-center py-4">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : history.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4 px-2">
+                  No saved runs yet
+                </p>
+              ) : (
+                history.map((conv) => (
+                  <button
+                    key={conv.id}
+                    onClick={() => loadHistoryItem(conv)}
+                    className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-accent text-xs group flex items-start justify-between gap-1 transition-colors"
+                  >
+                    <span className="line-clamp-2 text-foreground/80 leading-relaxed">{conv.title}</span>
+                    <button
+                      onClick={(e) => deleteHistoryItem(e, conv.id)}
+                      className="opacity-0 group-hover:opacity-100 shrink-0 p-0.5 rounded hover:text-destructive transition-all"
+                      title="Delete"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setHistoryOpen(true)}
+            className="w-10 h-10 flex items-center justify-center rounded-xl border border-border bg-card hover:bg-accent text-muted-foreground"
+            title="Show run history"
+          >
+            <Clock className="h-4 w-4" />
+          </button>
+        )}
+      </div>
 
       {/* ── Left: config panel ─────────────────────────────────────── */}
       <div className="w-80 flex-shrink-0 flex flex-col gap-4 overflow-y-auto">
