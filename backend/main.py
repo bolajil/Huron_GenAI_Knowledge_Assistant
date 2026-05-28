@@ -1904,6 +1904,55 @@ async def ingest_endpoint(
 # DOCUMENT VERSION MANAGEMENT
 # ═════════════════════════════════════════════════════════════════════════════
 
+@app.get("/api/v1/documents/recent")
+async def recent_document_versions(
+    limit: int = 30,
+    p: dict = Depends(current_user),
+):
+    """
+    Return the most recent document version events.
+    Root / dept_admin see all departments.
+    Regular users see only their own department.
+    Used by the Analytics version feed and header notifications.
+    """
+    role  = p.get("role", "user")
+    udept = p.get("dept_id", "general")
+
+    with db_conn() as conn:
+        if role in ("root", "dept_admin", "power_user"):
+            rows = conn.execute(
+                """SELECT dv.dept, dv.doc_id, dv.version, dv.source_file,
+                          dv.file_type, dv.chunk_count, dv.is_latest,
+                          dv.ingested_by, dv.ingested_at,
+                          d.display_name AS dept_name
+                   FROM document_versions dv
+                   LEFT JOIN departments d ON dv.dept = d.code
+                   ORDER BY dv.ingested_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT dv.dept, dv.doc_id, dv.version, dv.source_file,
+                          dv.file_type, dv.chunk_count, dv.is_latest,
+                          dv.ingested_by, dv.ingested_at,
+                          d.display_name AS dept_name
+                   FROM document_versions dv
+                   LEFT JOIN departments d ON dv.dept = d.code
+                   WHERE dv.dept = ?
+                   ORDER BY dv.ingested_at DESC LIMIT ?""",
+                (udept, limit),
+            ).fetchall()
+
+    versions = []
+    for r in rows:
+        row = dict(r)
+        # Normalise boolean for both SQLite (0/1) and PostgreSQL (bool)
+        row["is_latest"] = bool(row.get("is_latest", 0))
+        versions.append(row)
+
+    return {"versions": versions}
+
+
 @app.get("/api/v1/documents/{dept}")
 async def list_documents(dept: str, token: str = Depends(oauth2_scheme)):
     """List all documents in a department with their latest version info."""

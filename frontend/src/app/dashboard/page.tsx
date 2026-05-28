@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   FileText,
   MessageSquare,
@@ -30,6 +31,7 @@ function timeAgo(timestamp: string): string {
 
 export default function DashboardPage() {
   const { user, isRoot } = useAuth();
+  const router = useRouter();
   const firstName = user?.full_name?.split(" ")[0] || "User";
 
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -218,7 +220,10 @@ export default function DashboardPage() {
             </div>
           )}
           <div className="p-4 border-t border-border">
-            <button className="text-sm text-primary hover:underline flex items-center">
+            <button
+              onClick={() => router.push("/dashboard/analytics")}
+              className="text-sm text-primary hover:underline flex items-center"
+            >
               View all queries
               <ArrowUpRight className="w-4 h-4 ml-1" />
             </button>
@@ -231,14 +236,20 @@ export default function DashboardPage() {
             <h2 className="font-semibold">Quick Actions</h2>
           </div>
           <div className="p-4 space-y-3">
-            <button className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors text-left">
+            <button
+              onClick={() => router.push("/dashboard/query")}
+              className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors text-left"
+            >
               <MessageSquare className="w-5 h-5 text-primary mb-2" />
               <p className="font-medium text-sm">Ask a Question</p>
               <p className="text-xs text-muted-foreground mt-1">
                 Get instant answers from your knowledge base
               </p>
             </button>
-            <button className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors text-left">
+            <button
+              onClick={() => router.push("/dashboard/ingest")}
+              className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors text-left"
+            >
               <FileText className="w-5 h-5 text-primary mb-2" />
               <p className="font-medium text-sm">Upload Document</p>
               <p className="text-xs text-muted-foreground mt-1">
