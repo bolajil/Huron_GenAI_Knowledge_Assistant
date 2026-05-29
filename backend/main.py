@@ -35,6 +35,43 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))  # makes agent/ importable
 
+# ─── Sentry Error Tracking ────────────────────────────────────────────────────
+# No-op when SENTRY_DSN is blank — safe to leave empty during development.
+_SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+
+        def _scrub_sentry_event(event, hint):  # noqa: ANN001
+            """Remove sensitive fields before sending to Sentry."""
+            req = event.get("request", {})
+            if "data" in req and isinstance(req["data"], dict):
+                for field in ("query", "content", "messages", "password", "token"):
+                    if field in req["data"]:
+                        req["data"][field] = "[Filtered]"
+            headers = req.get("headers", {})
+            headers.pop("authorization", None)
+            headers.pop("cookie", None)
+            return event
+
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            environment=os.getenv("APP_ENV", "development"),
+            integrations=[
+                FastApiIntegration(transaction_style="endpoint"),
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            ],
+            # Capture 20% of requests for performance tracing.
+            # Set to 1.0 temporarily when diagnosing slow endpoints.
+            traces_sample_rate=0.2,
+            before_send=_scrub_sentry_event,
+        )
+        logger.info("Sentry initialised (env=%s)", os.getenv("APP_ENV", "development"))
+    except ImportError:
+        logger.warning("sentry-sdk not installed — run: pip install sentry-sdk[fastapi]")
+
 # ─── App ─────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Huron GenAI API", version="4.0.0")
 

@@ -34,6 +34,9 @@ langchain-mistralai
 groq
 langchain-groq
 
+# Observability
+sentry-sdk[fastapi]>=2.0.0
+
 # Authentication and Security Dependencies
 bcrypt==4.0.1
 pyotp==2.9.0
