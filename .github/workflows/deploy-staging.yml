@@ -1,7 +1,9 @@
 name: Deploy — Staging (AWS)
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [staging]
   workflow_dispatch:
 
@@ -21,6 +23,7 @@ jobs:
   build-backend:
     name: Build & Push — Backend
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
