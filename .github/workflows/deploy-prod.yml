@@ -1,10 +1,6 @@
 name: Deploy — Production (AWS)
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       confirm:
@@ -29,14 +25,10 @@ jobs:
   gate:
     name: Production Gate
     runs-on: ubuntu-latest
-    if: ${{ (github.event_name == 'workflow_dispatch') || (github.event.workflow_run.conclusion == 'success' && vars.PROD_URL != '') }}
+    if: ${{ github.event.inputs.confirm == 'DEPLOY' }}
     environment: production
     steps:
-      - name: Validate manual confirmation
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          [ "${{ github.event.inputs.confirm }}" = "DEPLOY" ] || (echo "Must type DEPLOY"; exit 1)
-      - run: echo "Gate approved"
+      - run: echo "Production gate approved — deploying"
 
   build-backend:
     name: Build & Push — Backend
