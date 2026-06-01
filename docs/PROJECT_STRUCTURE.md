@@ -1,144 +1,136 @@
-# VaultMind GenAI Knowledge Assistant - Project Structure
+# Huron GenAI Knowledge Assistant - Project Structure
 
-## Core Application Files
+> **Architecture Update (v4.0):** This project uses **FastAPI + Next.js**, not Streamlit.
+> Some legacy documentation in `/docs/archive/` may reference the old Streamlit architecture.
 
-### Main Entry Points
-- `genai_dashboard_modular.py` - Main Streamlit dashboard (recommended)
-- `genai_dashboard.py` - Full-featured dashboard 
-- `genai_dashboard_secure.py` - Enterprise secure dashboard
-- `main.py` - Alternative entry point
+## Application Architecture
 
-### Batch Scripts
-- `run_app.bat` - Start the application
-- `start_vaultmind.bat` - Quick start script
-- `run_vaultmind.bat` - Enhanced start script
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          HURON GENAI PLATFORM                               │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                  NEXT.JS 14 FRONTEND  (Port 3000)                   │   │
+│   │  React 18 · TypeScript · Tailwind CSS · Radix UI · Framer Motion   │   │
+│   └─────────────────────────┬───────────────────────────────────────────┘   │
+│                             │  REST + SSE                                   │
+│   ┌─────────────────────────▼───────────────────────────────────────────┐   │
+│   │                   FASTAPI BACKEND  (Port 8004)                      │   │
+│   │  Python 3.11 · JWT Auth · RBAC · ReAct Agent · SSE Streaming        │   │
+│   └─────────────────────────┬───────────────────────────────────────────┘   │
+│                             │                                               │
+│   ┌─────────────────────────▼───────────────────────────────────────────┐   │
+│   │                         DATA LAYER                                  │   │
+│   │  Pinecone (Vector) · PostgreSQL/SQLite · Redis · OpenAI APIs        │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ## Directory Structure
 
-### `/app/` - Core Application Logic
-- `/agents/` - AI agent implementations
-- `/auth/` - Authentication and authorization
-- `/mcp/` - MCP (Model Context Protocol) integration
-- `/middleware/` - Request/response middleware
+### `/backend/` - FastAPI Backend
+```
+backend/
+├── main.py                 # Main FastAPI application (legacy monolith)
+├── app.py                  # Refactored entry point (modular)
+├── core/                   # Core utilities
+│   ├── config.py           # Configuration & environment
+│   ├── database.py         # Database connection utilities
+│   ├── security.py         # JWT, auth, encryption
+│   └── migrations.py       # Database schema migrations
+├── models/                 # Pydantic schemas
+│   └── schemas.py          # Request/response models
+├── routes/                 # API route modules
+│   ├── auth.py             # Authentication endpoints
+│   ├── admin.py            # Admin/root endpoints
+│   └── health.py           # Health check
+├── agent/                  # ReAct Agent
+│   ├── react_agent.py      # ReAct loop with OpenAI function calling
+│   └── tools.py            # Pinecone tools with namespace enforcement
+└── utils/                  # Utilities
+    ├── ingestion_service.py # Versioned document ingestion
+    └── tenant_context.py    # Multi-tenant context
+```
 
-### `/api/` - API Endpoints
-- `agent_server.py` - Agent API server
-- `ingest_api.py` - Document ingestion API
-- `query_api.py` - Query processing API
+### `/frontend/` - Next.js Frontend
+```
+frontend/
+├── src/
+│   ├── app/                # Next.js App Router
+│   │   ├── dashboard/      # Dashboard pages
+│   │   │   ├── agent/      # AI Agent interface
+│   │   │   ├── chat/       # Chat Assistant
+│   │   │   ├── query/      # Query Assistant (RAG)
+│   │   │   ├── ingest/     # Document ingestion
+│   │   │   ├── analytics/  # Analytics & feedback
+│   │   │   ├── admin/      # Admin panel
+│   │   │   └── indexes/    # Index management
+│   │   └── (auth)/         # Auth pages (login, MFA)
+│   ├── components/         # Reusable React components
+│   ├── contexts/           # React contexts (auth, theme)
+│   ├── hooks/              # Custom hooks (useAgentStream)
+│   └── services/           # API client
+├── package.json
+└── Dockerfile.production
+```
 
-### `/tabs/` - Streamlit Tab Components
-- `query_assistant.py` - Document query interface
-- `agent_assistant_enhanced.py` - Enhanced AI assistant
-- `admin_panel.py` - Administration interface
-- And 17+ other specialized tabs
-
-### `/utils/` - Utility Functions
-- `comprehensive_document_retrieval.py` - Document search
-- `enhanced_llm_integration.py` - LLM processing
-- `vector_search_with_embeddings.py` - Vector search engine
-- `embedding_generator.py` - Embedding generation
-- And 59+ other utility modules
+### `/terraform/` - Infrastructure as Code
+```
+terraform/
+├── aws/                    # AWS ECS Fargate deployment
+│   ├── main.tf             # VPC, ECS, RDS, Redis, WAF
+│   ├── variables.tf        # Input variables
+│   └── outputs.tf          # Output values
+└── azure/                  # Azure Container Apps deployment
+    ├── main.tf
+    ├── variables.tf
+    └── outputs.tf
+```
 
 ### `/config/` - Configuration Files
-- `agent_config.py` - Agent configuration
-- `dashboard_config.py` - Dashboard settings
-- `enterprise_config.py` - Enterprise features
-- `/environments/` - Environment-specific configs
-
-### `/data/` - Data Storage
-- `/indexes/` - Document indexes
-- `/faiss_index/` - Vector database files
-- `/uploads/` - Uploaded documents
-- `/backups/` - Index backups
-
-### `/scripts/` - Utility Scripts
-- `/ingest/` - Document ingestion scripts
-- `cleanup_project_files.py` - Project maintenance
-- And 14+ other utility scripts
+- `llm_config.yml` - LLM model configuration
+- `security_config.json` - Auth provider settings
+- `dept_namespace_registry.yml` - Department namespaces
 
 ### `/tests/` - Test Suite
-- `test_agent_integration.py` - Agent testing
-- `test_agent_search.py` - Search testing
-- `test_embeddings.py` - Embedding testing
+```
+tests/
+├── unit/                   # Unit tests
+├── integration/            # Integration tests
+├── security/               # Security tests
+├── test_agent_integration.py
+├── test_agent_search.py
+└── test_embeddings.py
+```
 
-### `/ui/` - UI Components
-- `enhanced_research_ui.py` - Research interface
-- `ingest_any_ui.py` - Document ingestion UI
-- And 8+ other UI modules
+## Key Files
 
-### `/mcp/` - MCP System
-- `integration.py` - MCP integration layer
-- `logger.py` - MCP logging
-- `/tools/` - MCP tools and utilities
+| File | Purpose |
+|------|---------|
+| `Dockerfile.production` | Multi-stage FastAPI production build |
+| `docker-compose.local.yml` | Local development with SQLite |
+| `requirements_production.txt` | Python dependencies |
+| `.env.example` | Environment variable template |
+| `Makefile` | Common development commands |
 
-## Configuration Files
+## Tech Stack
 
-### Requirements
-- `requirements.txt` - Core dependencies
-- `requirements-enterprise.txt` - Enterprise features
-- `requirements-auth.txt` - Authentication
-- `requirements-weaviate.txt` - Weaviate integration
-
-### Environment
-- `.env.example` - Environment template
-- `.env` - Local environment variables
-- `constraints.txt` - Dependency constraints
-
-### Docker
-- `Dockerfile.production` - Production container
-- `.dockerignore` - Docker ignore patterns
-- `flowise.yml` - Flowise configuration
-
-## Documentation
-
-### Setup & Deployment
-- `DEPLOYMENT_GUIDE.md` - Deployment instructions
-- `PRODUCTION_DEPLOYMENT_GUIDE.md` - Production setup
-- `DOCKER_QUICKSTART.md` - Docker setup
-- `ENTERPRISE_DEPLOYMENT.md` - Enterprise deployment
-
-### Feature Guides
-- `ENTERPRISE_FEATURES_GUIDE.md` - Enterprise capabilities
-- `WEAVIATE_SETUP_GUIDE.md` - Weaviate integration
-- `AUTHENTICATION_TROUBLESHOOTING.md` - Auth issues
-- `SECURITY_CONFIGURATION.md` - Security setup
-
-### Technical Documentation
-- `VaultMind_Tab_Documentation.md` - Tab system overview
-- `MCP_SYSTEM_README.md` - MCP system details
-- `VECTOR_DB_FIX_README.md` - Vector DB troubleshooting
-- `SYSTEM_STATUS_SUMMARY.md` - System status overview
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Next.js 14, React 18, TypeScript, Tailwind CSS |
+| Backend | FastAPI, Uvicorn, Python 3.11 |
+| Vector DB | Pinecone (text-embedding-3-small, 1536-dim) |
+| LLM | OpenAI GPT-4o / GPT-4o-mini |
+| Auth | JWT + bcrypt + TOTP MFA |
+| Database | SQLite (dev) / PostgreSQL 15 (prod) |
+| Cache | Redis 7 |
+| IaC | Terraform (AWS + Azure) |
 
 ## Key Features
 
-### Document Processing
-- Multi-format document ingestion (PDF, TXT, DOCX)
-- Intelligent text extraction and chunking
-- Vector embedding generation using sentence-transformers
-- FAISS-based vector search with semantic similarity
-
-### AI Integration
-- Multiple LLM provider support (OpenAI, local models)
-- Enhanced prompt engineering and context building
-- Quality validation and response scoring
-- Fallback mechanisms for reliability
-
-### Enterprise Features
-- Active Directory authentication integration
-- Role-based access control
-- Audit logging and compliance tracking
-- Multi-tenant support with data isolation
-
-### Vector Database Support
-- FAISS for high-performance vector search
-- Weaviate integration for cloud-native deployment
-- Automatic embedding generation and indexing
-- Hybrid search combining keyword and semantic matching
-
-### User Interface
-- Modular Streamlit-based dashboard
-- Multiple specialized interfaces for different use cases
-- Real-time query processing and response streaming
-- Interactive document exploration and analysis
-
-This structure supports enterprise-grade document analysis and AI-powered knowledge assistance with robust security, scalability, and maintainability.
+- **ReAct Agent** with live SSE streaming
+- **Versioned Document Ingestion** with rollback
+- **4-Tier RBAC** (root, dept_admin, power_user, user)
+- **Namespace Isolation** per department
+- **MCP Tool Layer** for Slack, Email, PDF exports
+- **WAF + Rate Limiting** for security

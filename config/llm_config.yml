@@ -1,0 +1,63 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Huron GenAI Knowledge Assistant — LLM Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Default model for general queries and chat
+default_model: "gpt-4o"
+
+# Models by use case
+models:
+  # Primary reasoning model for complex queries
+  reasoning:
+    provider: "openai"
+    model: "gpt-4o"
+    temperature: 0.1
+    max_tokens: 4096
+  
+  # Fast model for simple tasks and classification
+  fast:
+    provider: "openai"
+    model: "gpt-4o-mini"
+    temperature: 0.0
+    max_tokens: 2048
+  
+  # Embedding model for vector search
+  embedding:
+    provider: "openai"
+    model: "text-embedding-3-small"
+    dimensions: 1536
+  
+  # Audio/video transcription
+  transcription:
+    provider: "openai"
+    model: "whisper-1"
+
+# Agent configuration
+agent:
+  model: "gpt-4o"
+  temperature: 0.1
+  max_iterations: 10
+  tool_choice: "auto"
+
+# Policy comparison (JSON mode)
+policy_comparison:
+  model: "gpt-4o-mini"
+  temperature: 0.0
+  response_format: "json_object"
+
+# Rate limiting (requests per minute by tier)
+rate_limits:
+  default: 60
+  power_user: 120
+  root: 300
+
+# Cost tracking (USD per 1M tokens)
+cost_per_million_tokens:
+  gpt-4o:
+    input: 2.50
+    output: 10.00
+  gpt-4o-mini:
+    input: 0.15
+    output: 0.60
+  text-embedding-3-small:
+    input: 0.02

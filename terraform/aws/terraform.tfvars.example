@@ -1,0 +1,102 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Huron GenAI Knowledge Assistant — AWS Terraform Variables
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Instructions:
+#   1. Copy this file to terraform.tfvars
+#   2. Fill in your actual values
+#   3. NEVER commit terraform.tfvars to git
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Region & Environment ──────────────────────────────────────────────────────
+aws_region   = "us-east-1"
+environment  = "prod"           # prod, staging, dev
+project_name = "huron"
+
+# ── API Keys (REQUIRED) ───────────────────────────────────────────────────────
+# OpenAI API key for GPT-4o and embeddings
+openai_api_key = "sk-proj-YOUR_OPENAI_API_KEY_HERE"
+
+# Pinecone API key for vector storage
+pinecone_api_key = "pcsk_YOUR_PINECONE_API_KEY_HERE"
+
+# JWT signing secret (minimum 32 characters)
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+jwt_secret = "YOUR_GENERATED_JWT_SECRET_MINIMUM_32_CHARACTERS"
+
+# MCP credential encryption key
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+mcp_encryption_key = "YOUR_GENERATED_MCP_ENCRYPTION_KEY"
+
+# ── Free Tier Toggle ──────────────────────────────────────────────────────────
+# Set to true to use AWS Free Tier compatible settings (db.t2.micro, no backups, etc.)
+# Set to false for production settings (db.t3.medium, Multi-AZ, encryption, backups)
+use_free_tier = true
+
+# ── Database ──────────────────────────────────────────────────────────────────
+db_username          = "huron_admin"
+db_password          = "YourStrongDatabasePassword123!"
+db_name              = "huron_db"
+db_allocated_storage = 20                 # GB
+
+# These are ignored when use_free_tier=true (production settings):
+# db_instance_class          = "db.t3.medium"
+# db_multi_az                = true
+# db_backup_retention_period = 7
+# db_deletion_protection     = true
+# db_skip_final_snapshot     = false
+# db_storage_encrypted       = true
+
+# ── ECS Task Resources ────────────────────────────────────────────────────────
+# Backend (FastAPI + Gunicorn)
+backend_cpu           = 2048    # 2 vCPU (256, 512, 1024, 2048, 4096)
+backend_memory        = 4096    # 4 GB
+backend_desired_count = 2       # Number of tasks
+
+# Frontend (Next.js)
+frontend_cpu           = 512    # 0.5 vCPU
+frontend_memory        = 1024   # 1 GB
+frontend_desired_count = 2      # Number of tasks
+
+# ── Custom Domain (OPTIONAL) ──────────────────────────────────────────────────
+# Uncomment and fill in if you have a custom domain
+# domain_name     = "huron.yourdomain.com"
+# certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/abcd1234-..."
+
+# ── Observability (OPTIONAL) ──────────────────────────────────────────────────
+# Sentry error tracking
+# sentry_dsn = "https://xxx@xxx.ingest.sentry.io/xxx"
+
+# PostHog product analytics
+# posthog_key = "phc_xxx"
+
+# ── LLM Observability (OPTIONAL) ──────────────────────────────────────────────
+# Langfuse - LLM tracing & analytics (https://langfuse.com)
+# langfuse_public_key = "pk-lf-xxx"
+# langfuse_secret_key = "sk-lf-xxx"
+# langfuse_host       = "https://cloud.langfuse.com"
+
+# LangSmith - LangChain tracing (https://smith.langchain.com)
+# langsmith_api_key = "lsv2_xxx"
+# langsmith_project = "huron-genai"
+
+# ── Route 53 (OPTIONAL) ───────────────────────────────────────────────────────
+# Custom domain DNS (requires hosted zone already created)
+# route53_zone_id = "Z1234567890ABC"
+
+# ── CI/CD Pipeline (OPTIONAL) ─────────────────────────────────────────────────
+# Enable automated deployments from GitHub
+# enable_cicd           = true
+# github_repo           = "your-org/huron-genai"
+# github_branch         = "main"
+# github_connection_arn = "arn:aws:codestar-connections:us-east-1:123456789012:connection/xxx"
+
+# ── Blue/Green Deployments (OPTIONAL) ─────────────────────────────────────────
+# Enable zero-downtime deployments with traffic shifting
+# enable_blue_green = true
+
+# ── OIDC/SSO (OPTIONAL) ───────────────────────────────────────────────────────
+# Azure AD / Entra ID integration
+# oidc_client_id     = "your-azure-ad-app-client-id"
+# oidc_client_secret = "your-azure-ad-app-client-secret"
