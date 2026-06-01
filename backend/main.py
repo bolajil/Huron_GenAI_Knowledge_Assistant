@@ -92,7 +92,23 @@ app.add_middleware(
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-SECRET_KEY  = os.getenv("JWT_SECRET_KEY", "huron-change-this-in-production")
+# ─── JWT Configuration ───────────────────────────────────────────────────────
+# SECURITY: In production (APP_ENV != local/test), JWT_SECRET_KEY is REQUIRED.
+# The application will fail fast to prevent running with an insecure default.
+_APP_ENV = os.getenv("APP_ENV", "development")
+_jwt_secret_raw = os.getenv("JWT_SECRET_KEY", "")
+
+if not _jwt_secret_raw:
+    if _APP_ENV in ("production", "prod", "staging"):
+        raise RuntimeError(
+            "FATAL: JWT_SECRET_KEY environment variable is required in production. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+    # Local dev fallback — logged as warning
+    _jwt_secret_raw = "local-dev-only-not-for-production"
+    logger.warning("JWT_SECRET_KEY not set — using insecure default (local dev only)")
+
+SECRET_KEY  = _jwt_secret_raw
 ALGORITHM   = "HS256"
 TOKEN_HOURS = 8
 

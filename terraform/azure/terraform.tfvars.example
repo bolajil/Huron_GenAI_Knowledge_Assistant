@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Huron GenAI Knowledge Assistant — Azure Terraform Variables
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Instructions:
+#   1. Copy this file to terraform.tfvars
+#   2. Fill in your actual values
+#   3. NEVER commit terraform.tfvars to git
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Azure Subscription ────────────────────────────────────────────────────────
+# Get with: az account show --query id -o tsv
+subscription_id = "YOUR_AZURE_SUBSCRIPTION_ID"
+
+# ── Region & Environment ──────────────────────────────────────────────────────
+location     = "eastus"         # eastus, westus2, westeurope, etc.
+environment  = "prod"           # prod, staging, dev
+project_name = "huron"
+
+# ── API Keys (REQUIRED) ───────────────────────────────────────────────────────
+# OpenAI API key for GPT-4o and embeddings
+openai_api_key = "sk-proj-YOUR_OPENAI_API_KEY_HERE"
+
+# Pinecone API key for vector storage
+pinecone_api_key = "pcsk_YOUR_PINECONE_API_KEY_HERE"
+
+# JWT signing secret (minimum 32 characters)
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+jwt_secret = "YOUR_GENERATED_JWT_SECRET_MINIMUM_32_CHARACTERS"
+
+# MCP credential encryption key
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+mcp_encryption_key = "YOUR_GENERATED_MCP_ENCRYPTION_KEY"
+
+# ── Database ──────────────────────────────────────────────────────────────────
+db_username = "huron_admin"
+db_password = "YourStrongDatabasePassword123!"
+
+# PostgreSQL SKU: B_Standard_B1ms (burstable dev), GP_Standard_D2s_v3 (general purpose prod)
+db_sku_name = "GP_Standard_D2s_v3"
+
+# ── Container App Resources ───────────────────────────────────────────────────
+# Backend (FastAPI + Gunicorn)
+backend_cpu           = 2.0     # vCPU cores (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
+backend_memory        = "4Gi"   # Memory (0.5Gi to 4Gi)
+backend_min_replicas  = 1
+backend_max_replicas  = 5
+
+# Frontend (Next.js)
+frontend_cpu          = 0.5
+frontend_memory       = "1Gi"
+frontend_min_replicas = 1
+frontend_max_replicas = 3
+
+# ── Redis Cache ───────────────────────────────────────────────────────────────
+# SKU: Basic_C0 (dev), Standard_C1 (prod)
+redis_sku_name     = "Standard"
+redis_family       = "C"
+redis_capacity     = 1
+
+# ── Custom Domain (OPTIONAL) ──────────────────────────────────────────────────
+# custom_domain = "huron.yourdomain.com"
+
+# ── Observability (OPTIONAL) ──────────────────────────────────────────────────
+# Sentry error tracking
+# sentry_dsn = "https://xxx@xxx.ingest.sentry.io/xxx"
+
+# PostHog product analytics
+# posthog_key = "phc_xxx"

@@ -1,12 +1,12 @@
 {
   "authentication": {
     "local_enabled": true,
-    "ad_enabled": true,
-    "okta_enabled": true,
+    "ad_enabled": false,
+    "okta_enabled": false,
     "mfa_enabled": true
   },
   "active_directory": {
-    "configured": true,
+    "configured": false,
     "server": "",
     "port": 636,
     "domain": "",
@@ -17,7 +17,7 @@
     "use_ssl": true
   },
   "okta": {
-    "configured": true,
+    "configured": false,
     "domain": "",
     "client_id": "",
     "authorization_server": "default",

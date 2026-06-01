@@ -1,0 +1,32 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# AWS CodeDeploy AppSpec — Blue/Green ECS Deployment
+# ═══════════════════════════════════════════════════════════════════════════════
+# This file is used by CodeDeploy for Blue/Green deployments
+# Place in repository root
+# ═══════════════════════════════════════════════════════════════════════════════
+
+version: 0.0
+Resources:
+  - TargetService:
+      Type: AWS::ECS::Service
+      Properties:
+        TaskDefinition: <TASK_DEFINITION>
+        LoadBalancerInfo:
+          ContainerName: "backend"
+          ContainerPort: 8004
+        PlatformVersion: "LATEST"
+        NetworkConfiguration:
+          AwsvpcConfiguration:
+            Subnets:
+              - "<SUBNET_1>"
+              - "<SUBNET_2>"
+            SecurityGroups:
+              - "<SECURITY_GROUP>"
+            AssignPublicIp: "DISABLED"
+
+Hooks:
+  - BeforeInstall: "scripts/before_install.sh"
+  - AfterInstall: "scripts/after_install.sh"
+  - AfterAllowTestTraffic: "scripts/test_traffic.sh"
+  - BeforeAllowTraffic: "scripts/before_traffic.sh"
+  - AfterAllowTraffic: "scripts/after_traffic.sh"
