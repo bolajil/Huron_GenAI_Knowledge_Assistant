@@ -82,7 +82,7 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-3xl font-bold">Dashboard</h1>
         <p className="text-muted-foreground mt-1">
-          Welcome back, {firstName}! Here's your Huron Knowledge Assistant overview.
+          Welcome back, {firstName}! Here&apos;s your Huron Knowledge Assistant overview.
         </p>
       </div>
 

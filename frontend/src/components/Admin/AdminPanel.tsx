@@ -4,7 +4,7 @@
  */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Users,
   Settings,
@@ -28,14 +28,37 @@ interface SystemStats {
 type AdminTab = "overview" | "users" | "departments" | "settings";
 
 export function AdminPanel() {
-  const { user, hasRole } = useAuth();
+  const { hasRole } = useAuth();
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Check admin access
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      if (activeTab === "overview" || activeTab === "users") {
+        const statsData = await api.getStats();
+        setStats(statsData);
+      }
+      if (activeTab === "users") {
+        const usersData = await api.rootListAllUsers();
+        setUsers(usersData.users || []);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // All hooks must be called before any early return
   if (!hasRole(["admin"])) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -49,31 +72,6 @@ export function AdminPanel() {
       </div>
     );
   }
-
-  useEffect(() => {
-    loadData();
-  }, [activeTab]);
-
-  const loadData = async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      if (activeTab === "overview" || activeTab === "users") {
-        const statsData = await api.getStats();
-        setStats(statsData);
-      }
-
-      if (activeTab === "users") {
-        const usersData = await api.rootListAllUsers();
-        setUsers(usersData.users || []);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load data");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const tabs = [
     { id: "overview" as const, label: "Overview", icon: BarChart3 },

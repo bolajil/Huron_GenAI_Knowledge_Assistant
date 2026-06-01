@@ -211,7 +211,7 @@ export default function MFAPage() {
               </div>
 
               <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <p className="text-gray-400 text-xs mb-2">Can't scan? Use this key:</p>
+                <p className="text-gray-400 text-xs mb-2">Can&apos;t scan? Use this key:</p>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 text-green-400 font-mono text-center tracking-wider text-sm">
                     JBSWY 3DPE HPK3 PXP
@@ -240,7 +240,7 @@ export default function MFAPage() {
                   onClick={() => setStep("verify")}
                   className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-all"
                 >
-                  I've Scanned It
+                  I&apos;ve Scanned It
                 </button>
               </div>
             </div>
