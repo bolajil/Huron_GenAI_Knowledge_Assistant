@@ -29,6 +29,7 @@ jobs:
   gate:
     name: Production Gate
     runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'workflow_dispatch') || (github.event.workflow_run.conclusion == 'success' && vars.PROD_URL != '') }}
     environment: production
     steps:
       - name: Validate manual confirmation
