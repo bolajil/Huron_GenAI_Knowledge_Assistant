@@ -1,12 +1,13 @@
 """
-Integration test fixtures — hit the running backend container over HTTP.
-Run `docker compose -f docker-compose.test.yml up -d` before these tests.
-Backend is exposed on host port 8005.
+Integration test fixtures — hit the running backend over HTTP.
+In CI: backend runs on the port set by BACKEND_URL env var (default 8004).
+Locally with docker compose: set BACKEND_URL=http://localhost:8005 to override.
 """
+import os
 import pytest
 import requests
 
-BASE_URL = "http://localhost:8005"
+BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8004")
 
 
 @pytest.fixture(scope="session")

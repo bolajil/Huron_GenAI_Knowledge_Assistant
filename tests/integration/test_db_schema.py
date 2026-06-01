@@ -1,8 +1,9 @@
 """Verify schema and seed data by querying the running backend's health + admin endpoints."""
+import os
 import pytest
 import requests
 
-BASE_URL = "http://localhost:8005"
+BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8004")
 
 
 @pytest.mark.integration
