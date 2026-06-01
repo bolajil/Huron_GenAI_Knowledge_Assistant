@@ -46,7 +46,8 @@ export function ChatInterface() {
   const [selectedIndex, setSelectedIndex]       = useState("");
   const [availableIndexes, setAvailableIndexes] = useState<IndexInfo[]>([]);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef  = useRef<HTMLDivElement>(null);
+  const autoRestored    = useRef(false);
 
   // ── Load indexes ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -63,12 +64,29 @@ export function ChatInterface() {
       .catch(() => {});
   }, [user?.department]);
 
-  // ── Load conversation list ─────────────────────────────────────────────────
+  // ── Load conversation list (+ auto-restore most recent on first mount) ──────
   const loadConversations = useCallback(async () => {
     setLoadingConvs(true);
     try {
       const data = await api.listConversations("chat");
       setConversations(data.conversations);
+
+      if (!autoRestored.current && data.conversations.length > 0) {
+        autoRestored.current = true;
+        const latest = data.conversations[0];
+        setActiveConvId(latest.id);
+        setMessages([]);
+        setRatings({});
+        setLoadingMsgs(true);
+        try {
+          const msgData = await api.getMessages(latest.id);
+          setMessages(msgData.messages as UIMessage[]);
+        } catch {
+          /* ignore — sidebar still shows the list */
+        } finally {
+          setLoadingMsgs(false);
+        }
+      }
     } catch {
       /* ignore */
     } finally {

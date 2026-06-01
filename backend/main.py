@@ -11,7 +11,7 @@ All frontend/backend integration gaps fixed:
 
 from __future__ import annotations
 
-import asyncio, os, sys, sqlite3, logging, secrets, time
+import asyncio, os, sys, sqlite3, logging, secrets, time, json, hashlib, base64
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -28,7 +28,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 
-load_dotenv()
+# Load shared API keys from the project root first, then let backend/.env
+# override backend-specific settings (SENTRY_DSN, APP_ENV, JWT_SECRET_KEY).
+# Root goes first so its real values win before backend/.env can shadow them
+# with empty placeholder lines.
+_ROOT_DIR = Path(__file__).parent.parent
+load_dotenv(_ROOT_DIR / ".env",             override=False)
+load_dotenv(_ROOT_DIR / "backend" / ".env", override=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -90,6 +96,28 @@ SECRET_KEY  = os.getenv("JWT_SECRET_KEY", "huron-change-this-in-production")
 ALGORITHM   = "HS256"
 TOKEN_HOURS = 8
 
+# ─── MCP credential encryption ────────────────────────────────────────────────
+# Uses MCP_ENCRYPTION_KEY when set (recommended for production so JWT rotation
+# doesn't invalidate stored tool credentials).  Falls back to JWT-derived key
+# for zero-config local dev.
+from cryptography.fernet import Fernet as _Fernet  # cryptography already in requirements
+
+_MCP_ENC_KEY = os.getenv("MCP_ENCRYPTION_KEY", "")
+
+def _fernet() -> _Fernet:
+    if _MCP_ENC_KEY:
+        # Caller must supply a valid 32-byte URL-safe base64 key.
+        raw = hashlib.sha256(_MCP_ENC_KEY.encode()).digest()
+    else:
+        raw = hashlib.sha256(SECRET_KEY.encode()).digest()
+    return _Fernet(base64.urlsafe_b64encode(raw))
+
+def _encrypt_config(cfg: dict) -> str:
+    return _fernet().encrypt(json.dumps(cfg).encode()).decode()
+
+def _decrypt_config(ciphertext: str) -> dict:
+    return json.loads(_fernet().decrypt(ciphertext.encode()))
+
 # ─── Database ────────────────────────────────────────────────────────────────
 #
 # POSTGRESQL MIGRATION — run when ready:
@@ -99,13 +127,36 @@ TOKEN_HOURS = 8
 #   Connection pool: pool_size=20, max_overflow=40, pool_timeout=30
 #   PgBouncer in front for 20k users (transaction pooling mode).
 #
-DB_PATH      = Path(__file__).parent.parent / "data" / "huron.db"
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+_default_db  = str(Path(__file__).parent / "data" / "huron.db")
+DB_PATH      = Path(os.getenv("SQLITE_DB_PATH", _default_db))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+if not DATABASE_URL:                                   # SQLite only — skip in PostgreSQL mode
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# Token blacklist — in-memory + DB now.
-# REDIS MIGRATION: replace with redis.Redis(host=REDIS_HOST).sadd("blacklist", jti)
+# VECTOR_BACKEND: "pinecone" (default when PINECONE_API_KEY is set) or "faiss"
+# (local dev / CI without a Pinecone account).  Consumed by utils/ pipeline.
+VECTOR_BACKEND = os.getenv(
+    "VECTOR_BACKEND",
+    "pinecone" if os.getenv("PINECONE_API_KEY") else "faiss",
+)
+os.environ.setdefault("VECTOR_BACKEND", VECTOR_BACKEND)  # expose to child modules
+
+# Token blacklist — in-memory (dev) or Redis (production).
+# Set REDIS_URL=redis://host:6379/0 to activate Redis-backed blacklist.
+# Without REDIS_URL the previous in-memory + SQLite behaviour is preserved.
 _token_blacklist: set[str] = set()
+
+_REDIS_URL = os.getenv("REDIS_URL", "")
+_redis_client = None
+if _REDIS_URL:
+    try:
+        import redis as _redis_lib
+        _redis_client = _redis_lib.from_url(_REDIS_URL, decode_responses=True)
+        _redis_client.ping()
+        logger.info("Redis JWT blacklist active: %s", _REDIS_URL.split("@")[-1])
+    except Exception as _re:
+        logger.warning("Redis unavailable (%s) — falling back to in-memory blacklist", _re)
+        _redis_client = None
 
 
 class _DBConn:
@@ -313,13 +364,183 @@ def _ensure_pg_conversations_tables():
         logger.warning("Could not ensure conversations tables: %s", exc)
 
 
+def _ensure_pg_mcp_tables():
+    """Create mcp_tools, mcp_tool_configs, mcp_action_log in PostgreSQL if missing."""
+    try:
+        conn = _DBConn()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mcp_tools (
+                id          SERIAL PRIMARY KEY,
+                name        TEXT NOT NULL,
+                category    TEXT NOT NULL DEFAULT 'communication',
+                description TEXT NOT NULL DEFAULT '',
+                tool_type   TEXT NOT NULL,
+                dept_scope  TEXT,
+                min_role    TEXT NOT NULL DEFAULT 'user',
+                is_enabled  INTEGER NOT NULL DEFAULT 1,
+                created_by  TEXT NOT NULL DEFAULT 'system',
+                created_at  TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mcp_tool_configs (
+                id            SERIAL PRIMARY KEY,
+                tool_id       INTEGER NOT NULL REFERENCES mcp_tools(id) ON DELETE CASCADE,
+                dept_code     TEXT NOT NULL,
+                config_json   TEXT NOT NULL,
+                configured_by TEXT NOT NULL DEFAULT 'system',
+                configured_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(tool_id, dept_code)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mcp_action_log (
+                id            SERIAL PRIMARY KEY,
+                tool_id       INTEGER REFERENCES mcp_tools(id),
+                user_id       INTEGER REFERENCES users(id),
+                dept_code     TEXT,
+                query_snippet TEXT,
+                status        TEXT NOT NULL DEFAULT 'ok',
+                error_msg     TEXT,
+                ran_at        TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logger.warning("Could not ensure mcp tables: %s", exc)
+
+
+def _ensure_pg_core_tables():
+    """Create base schema in PostgreSQL (users, departments, etc.) if missing."""
+    try:
+        conn = _DBConn()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id            SERIAL PRIMARY KEY,
+                username      TEXT UNIQUE NOT NULL,
+                email         TEXT UNIQUE NOT NULL,
+                full_name     TEXT NOT NULL DEFAULT '',
+                password_hash TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'user',
+                department    TEXT NOT NULL DEFAULT 'general',
+                is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+                created_by    INTEGER REFERENCES users(id),
+                last_login    TIMESTAMPTZ,
+                created_at    TIMESTAMPTZ DEFAULT NOW(),
+                updated_at    TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS departments (
+                id              SERIAL PRIMARY KEY,
+                code            TEXT UNIQUE NOT NULL,
+                display_name    TEXT NOT NULL,
+                namespace       TEXT UNIQUE NOT NULL,
+                classification  TEXT NOT NULL DEFAULT 'internal',
+                is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+                admin_user_id   INTEGER REFERENCES users(id),
+                doc_count       INTEGER NOT NULL DEFAULT 0,
+                query_count     INTEGER NOT NULL DEFAULT 0,
+                user_count      INTEGER NOT NULL DEFAULT 0,
+                created_at      TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS access_requests (
+                id              SERIAL PRIMARY KEY,
+                requester_id    INTEGER NOT NULL REFERENCES users(id),
+                dept_code       TEXT NOT NULL,
+                requested_tab   TEXT NOT NULL,
+                requested_role  TEXT NOT NULL DEFAULT 'user',
+                justification   TEXT NOT NULL DEFAULT '',
+                status          TEXT NOT NULL DEFAULT 'pending',
+                reviewed_by     INTEGER REFERENCES users(id),
+                reviewed_at     TIMESTAMPTZ,
+                created_at      TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id          SERIAL PRIMARY KEY,
+                user_id     INTEGER REFERENCES users(id),
+                username    TEXT,
+                action      TEXT NOT NULL,
+                dept_code   TEXT,
+                namespace   TEXT,
+                detail      TEXT,
+                created_at  TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS query_log (
+                id            SERIAL PRIMARY KEY,
+                user_id       INTEGER REFERENCES users(id),
+                dept_code     TEXT,
+                query_text    TEXT,
+                response_ms   INTEGER,
+                faithfulness  REAL,
+                sources_count INTEGER DEFAULT 0,
+                created_at    TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS token_blacklist (
+                jti        TEXT PRIMARY KEY,
+                expired_at TIMESTAMPTZ NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS oidc_role_mappings (
+                id           SERIAL PRIMARY KEY,
+                ad_group     TEXT NOT NULL UNIQUE,
+                huron_role   TEXT NOT NULL CHECK(huron_role IN ('root','dept_admin','power_user','user')),
+                dept_code    TEXT,
+                description  TEXT,
+                created_by   TEXT NOT NULL DEFAULT 'system',
+                created_at   TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logger.warning("Could not ensure core tables: %s", exc)
+        raise  # re-raise so init_db() fails fast rather than proceeding to _seed_db()
+
+
+def _seed_mcp_tools():
+    """Insert the four default MCP tools if the table is empty."""
+    _DEFAULTS = [
+        ("Slack Notification", "communication", "Send result to a Slack channel",      "slack",         None, "user"),
+        ("Email Report",       "communication", "Email result to a recipient",          "email",         None, "user"),
+        ("PDF Report",         "report",        "Download result as a formatted PDF",   "pdf_report",    None, "user"),
+        ("Data Analyzer",      "analysis",      "AI analysis of trends in the result",  "data_analyzer", None, "power_user"),
+    ]
+    try:
+        with _DBConn() as conn:
+            if conn.execute("SELECT id FROM mcp_tools LIMIT 1").fetchone():
+                return
+            for name, cat, desc, ttype, scope, min_role in _DEFAULTS:
+                conn.execute(
+                    "INSERT INTO mcp_tools (name,category,description,tool_type,dept_scope,min_role) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (name, cat, desc, ttype, scope, min_role),
+                )
+            conn.commit()
+    except Exception as exc:
+        logger.warning("Could not seed mcp_tools: %s", exc)
+
+
 def init_db():
     if DATABASE_URL:
-        _seed_db()
+        _ensure_pg_core_tables()           # base schema first — users, departments, etc.
         _ensure_pg_feedback_table()
         _ensure_pg_agent_runs_table()
         _ensure_pg_doc_versions_table()
         _ensure_pg_conversations_tables()
+        _ensure_pg_mcp_tables()
+        _seed_db()                         # seed after all tables exist
+        _seed_mcp_tools()
         return
 
     conn = sqlite3.connect(DB_PATH)
@@ -489,9 +710,62 @@ def init_db():
         ON conversation_messages(conversation_id, created_at ASC)
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mcp_tools (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL,
+            category    TEXT NOT NULL DEFAULT 'communication',
+            description TEXT NOT NULL DEFAULT '',
+            tool_type   TEXT NOT NULL,
+            dept_scope  TEXT,
+            min_role    TEXT NOT NULL DEFAULT 'user',
+            is_enabled  INTEGER NOT NULL DEFAULT 1,
+            created_by  TEXT NOT NULL DEFAULT 'system',
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mcp_tool_configs (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool_id       INTEGER NOT NULL REFERENCES mcp_tools(id) ON DELETE CASCADE,
+            dept_code     TEXT NOT NULL,
+            config_json   TEXT NOT NULL,
+            configured_by TEXT NOT NULL DEFAULT 'system',
+            configured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(tool_id, dept_code)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mcp_action_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool_id       INTEGER REFERENCES mcp_tools(id),
+            user_id       INTEGER REFERENCES users(id),
+            dept_code     TEXT,
+            query_snippet TEXT,
+            status        TEXT NOT NULL DEFAULT 'ok',
+            error_msg     TEXT,
+            ran_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS oidc_role_mappings (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            ad_group     TEXT NOT NULL UNIQUE,
+            huron_role   TEXT NOT NULL CHECK(huron_role IN ('root','dept_admin','power_user','user')),
+            dept_code    TEXT,
+            description  TEXT,
+            created_by   TEXT NOT NULL DEFAULT 'system',
+            created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
     _seed_db()
+    _seed_mcp_tools()
     _ensure_pg_feedback_table()
     _ensure_pg_agent_runs_table()
     _ensure_pg_doc_versions_table()
@@ -585,12 +859,16 @@ def verify_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         jti = payload.get("jti", "")
-        if jti in _token_blacklist:
-            return None
-        with db_conn() as conn:
-            if conn.execute("SELECT jti FROM token_blacklist WHERE jti=?", (jti,)).fetchone():
-                _token_blacklist.add(jti)
+        if _redis_client:
+            if _redis_client.sismember("huron:blacklist", jti):
                 return None
+        else:
+            if jti in _token_blacklist:
+                return None
+            with db_conn() as conn:
+                if conn.execute("SELECT jti FROM token_blacklist WHERE jti=?", (jti,)).fetchone():
+                    _token_blacklist.add(jti)
+                    return None
         return payload
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
         return None
@@ -601,10 +879,16 @@ def blacklist_token(token: str):
         p   = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
         jti = p.get("jti", "")
         exp = datetime.utcfromtimestamp(p.get("exp", 0))
-        _token_blacklist.add(jti)
-        with db_conn() as conn:
-            conn.execute("INSERT OR IGNORE INTO token_blacklist (jti,expired_at) VALUES (?,?)", (jti, exp))
-            conn.commit()
+        ttl = max(int((exp - datetime.utcnow()).total_seconds()), 1)
+        if _redis_client:
+            _redis_client.sadd("huron:blacklist", jti)
+            # expire the set member after the token's natural lifetime
+            _redis_client.expire("huron:blacklist", ttl + 3600)
+        else:
+            _token_blacklist.add(jti)
+            with db_conn() as conn:
+                conn.execute("INSERT OR IGNORE INTO token_blacklist (jti,expired_at) VALUES (?,?)", (jti, exp))
+                conn.commit()
     except Exception:
         pass
 
@@ -2156,16 +2440,131 @@ async def delete_document(dept: str, doc_id: str, token: str = Depends(oauth2_sc
 # HEALTH + INDEXES
 # ═════════════════════════════════════════════════════════════════════════════
 
+# ─── OIDC / SSO skeleton ─────────────────────────────────────────────────────
+# Activated only when OIDC_CLIENT_ID is set.  All three vars must be present
+# for SSO to function; missing any one will return 501 Not Implemented.
+_OIDC_CLIENT_ID     = os.getenv("OIDC_CLIENT_ID", "")
+_OIDC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET", "")
+_OIDC_AUTHORITY     = os.getenv("OIDC_AUTHORITY", "")   # e.g. https://login.microsoftonline.com/<tenant>
+_OIDC_REDIRECT_URI  = os.getenv("OIDC_REDIRECT_URI", "http://localhost:3000/api/v1/auth/oidc/callback")
+
+@app.get("/api/v1/auth/oidc/login")
+async def oidc_login():
+    """Redirect browser to Microsoft Entra ID (or any OIDC provider) login page."""
+    if not (_OIDC_CLIENT_ID and _OIDC_AUTHORITY):
+        raise HTTPException(status_code=501, detail="SSO not configured on this server")
+    from urllib.parse import urlencode
+    params = {
+        "client_id":     _OIDC_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri":  _OIDC_REDIRECT_URI,
+        "scope":         "openid profile email",
+        "state":         secrets.token_urlsafe(16),
+    }
+    auth_url = f"{_OIDC_AUTHORITY}/oauth2/v2.0/authorize?{urlencode(params)}"
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/api/v1/auth/oidc/callback")
+async def oidc_callback(code: str = "", error: str = "", state: str = ""):
+    """Exchange OIDC auth code for tokens, map AD groups → Huron role, issue JWT."""
+    if not (_OIDC_CLIENT_ID and _OIDC_CLIENT_SECRET and _OIDC_AUTHORITY):
+        raise HTTPException(status_code=501, detail="SSO not configured on this server")
+    if error:
+        raise HTTPException(status_code=400, detail=f"OIDC provider error: {error}")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    import httpx as _httpx
+    token_url = f"{_OIDC_AUTHORITY}/oauth2/v2.0/token"
+    resp = _httpx.post(token_url, data={
+        "grant_type":    "authorization_code",
+        "client_id":     _OIDC_CLIENT_ID,
+        "client_secret": _OIDC_CLIENT_SECRET,
+        "code":          code,
+        "redirect_uri":  _OIDC_REDIRECT_URI,
+    })
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Failed to exchange OIDC code")
+
+    id_token_claims = jwt.decode(resp.json()["id_token"], options={"verify_signature": False})
+    email    = id_token_claims.get("preferred_username") or id_token_claims.get("email", "")
+    ad_groups: list[str] = id_token_claims.get("groups", [])
+
+    # Resolve Huron role from AD group mappings
+    huron_role = "user"
+    dept_code  = "general"
+    with db_conn() as conn:
+        for grp in ad_groups:
+            row = conn.execute(
+                "SELECT huron_role, dept_code FROM oidc_role_mappings WHERE ad_group=?", (grp,)
+            ).fetchone()
+            if row:
+                huron_role = row["huron_role"]
+                dept_code  = row["dept_code"] or "general"
+                break
+
+        # Auto-provision user on first SSO login
+        existing = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+        if not existing:
+            hashed = bcrypt.hashpw(secrets.token_bytes(32), bcrypt.gensalt()).decode()
+            conn.execute(
+                "INSERT INTO users (username,email,password_hash,role,department,is_active,auth_method) "
+                "VALUES (?,?,?,?,?,1,'oidc')",
+                (email.split("@")[0], email, hashed, huron_role, dept_code),
+            )
+            conn.commit()
+        user_row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+
+    user_dict = dict(user_row)
+    # create_token is defined below in the Auth section — forward call is fine
+    token = create_token(user_dict)
+    from fastapi.responses import RedirectResponse
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    return RedirectResponse(url=f"{frontend_url}/auth/sso-complete?token={token}")
+
+
 @app.get("/health")
 async def health():
+    checks: dict = {"version": "4.0.0", "timestamp": datetime.utcnow().isoformat()}
+
+    # Database
     try:
         with db_conn() as conn:
             conn.execute("SELECT 1")
-        db_backend = "postgresql" if DATABASE_URL else "sqlite"
-        return {"status": "healthy", "version": "4.0.0", "db": db_backend,
-                "timestamp": datetime.utcnow().isoformat()}
+        checks["db"] = {"status": "ok", "backend": "postgresql" if DATABASE_URL else "sqlite"}
     except Exception as e:
-        return {"status": "degraded", "error": str(e)}
+        checks["db"] = {"status": "error", "detail": str(e)}
+
+    # Redis (optional)
+    if _redis_client:
+        try:
+            _redis_client.ping()
+            checks["redis"] = {"status": "ok"}
+        except Exception as e:
+            checks["redis"] = {"status": "error", "detail": str(e)}
+    else:
+        checks["redis"] = {"status": "disabled"}
+
+    # Pinecone (optional — only if API key present)
+    _pinecone_key = os.getenv("PINECONE_API_KEY", "")
+    if _pinecone_key:
+        try:
+            from pinecone import Pinecone as _PC
+            _pc = _PC(api_key=_pinecone_key)
+            _pc.list_indexes()
+            checks["pinecone"] = {"status": "ok"}
+        except Exception as e:
+            checks["pinecone"] = {"status": "error", "detail": str(e)}
+    else:
+        checks["pinecone"] = {"status": "disabled"}
+
+    overall = "healthy" if all(
+        v.get("status") in ("ok", "disabled") for v in checks.values() if isinstance(v, dict)
+    ) else "degraded"
+    checks["status"] = overall
+    return checks
 
 
 @app.get("/api/v1/indexes")
@@ -2344,6 +2743,223 @@ async def list_agent_runs(limit: int = 20, p: dict = Depends(current_user)):
                 (p.get("user_id"), limit),
             ).fetchall()
     return {"runs": [dict(r) for r in rows]}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MCP — Model Context Protocol action layer
+# ═════════════════════════════════════════════════════════════════════════════
+
+class McpToolCreate(BaseModel):
+    name:        str
+    category:    str = "communication"
+    description: str = ""
+    tool_type:   str
+    dept_scope:  Optional[str] = None
+    min_role:    str = "user"
+    is_enabled:  bool = True
+
+class McpToolUpdate(BaseModel):
+    name:        Optional[str]  = None
+    description: Optional[str]  = None
+    dept_scope:  Optional[str]  = None
+    min_role:    Optional[str]  = None
+    is_enabled:  Optional[bool] = None
+
+class McpConfigSet(BaseModel):
+    dept_code: str
+    config:    dict
+
+class McpRunRequest(BaseModel):
+    tool_id:     int
+    result_text: str
+    query:       str
+    user_params: dict = {}
+
+
+def _can_run_tool(user_role: str, min_role: str, user_dept: str, dept_scope: Optional[str]) -> bool:
+    clearance = {"root": 5, "dept_admin": 4, "power_user": 3, "user": 2, "viewer": 1}
+    if clearance.get(user_role, 0) < clearance.get(min_role, 2):
+        return False
+    if dept_scope and user_role != "root":
+        if user_dept not in [d.strip() for d in dept_scope.split(",")]:
+            return False
+    return True
+
+
+@app.get("/api/v1/mcp/tools")
+async def list_mcp_tools(p: dict = Depends(current_user)):
+    with db_conn() as conn:
+        rows = conn.execute(
+            "SELECT id,name,category,description,tool_type,dept_scope,min_role,is_enabled,created_by,created_at "
+            "FROM mcp_tools ORDER BY category,name"
+        ).fetchall()
+    user_role = p.get("role", "user")
+    user_dept = p.get("department", "general")
+    tools = []
+    for r in rows:
+        row = dict(r)
+        if not row.get("is_enabled"):
+            continue
+        if not _can_run_tool(user_role, row["min_role"], user_dept, row.get("dept_scope")):
+            continue
+        with db_conn() as conn:
+            cfg = conn.execute(
+                "SELECT id FROM mcp_tool_configs WHERE tool_id=? AND dept_code=?",
+                (row["id"], user_dept),
+            ).fetchone()
+        row["configured"] = cfg is not None
+        tools.append(row)
+    return {"tools": tools}
+
+
+@app.post("/api/v1/mcp/tools")
+async def create_mcp_tool(body: McpToolCreate, p: dict = Depends(current_user)):
+    if p.get("role") not in ("root", "dept_admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins only")
+    with db_conn() as conn:
+        conn.execute(
+            "INSERT INTO mcp_tools (name,category,description,tool_type,dept_scope,min_role,is_enabled,created_by) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (body.name, body.category, body.description, body.tool_type,
+             body.dept_scope, body.min_role, 1 if body.is_enabled else 0,
+             p.get("username", "unknown")),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM mcp_tools ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    return {"status": "ok", "tool": dict(row)}
+
+
+@app.patch("/api/v1/mcp/tools/{tool_id}")
+async def update_mcp_tool(tool_id: int, body: McpToolUpdate, p: dict = Depends(current_user)):
+    if p.get("role") not in ("root", "dept_admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins only")
+    fields, vals = [], []
+    if body.name        is not None: fields.append("name=?");        vals.append(body.name)
+    if body.description is not None: fields.append("description=?"); vals.append(body.description)
+    if body.dept_scope  is not None: fields.append("dept_scope=?");  vals.append(body.dept_scope)
+    if body.min_role    is not None: fields.append("min_role=?");    vals.append(body.min_role)
+    if body.is_enabled  is not None: fields.append("is_enabled=?");  vals.append(1 if body.is_enabled else 0)
+    if not fields:
+        return {"status": "no-op"}
+    vals.append(tool_id)
+    with db_conn() as conn:
+        conn.execute(f"UPDATE mcp_tools SET {', '.join(fields)} WHERE id=?", vals)
+        conn.commit()
+    return {"status": "ok"}
+
+
+@app.delete("/api/v1/mcp/tools/{tool_id}")
+async def delete_mcp_tool(tool_id: int, p: dict = Depends(current_user)):
+    if p.get("role") != "root":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Root only")
+    with db_conn() as conn:
+        conn.execute("DELETE FROM mcp_tools WHERE id=?", (tool_id,))
+        conn.commit()
+    return {"status": "ok"}
+
+
+@app.put("/api/v1/mcp/tools/{tool_id}/config")
+async def set_mcp_tool_config(tool_id: int, body: McpConfigSet, p: dict = Depends(current_user)):
+    if p.get("role") not in ("root", "dept_admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins only")
+    encrypted = _encrypt_config(body.config)
+    who = p.get("username", "unknown")
+    with db_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO mcp_tool_configs (tool_id,dept_code,config_json,configured_by) VALUES (?,?,?,?)",
+            (tool_id, body.dept_code, encrypted, who),
+        )
+        conn.execute(
+            "UPDATE mcp_tool_configs SET config_json=?,configured_by=?,configured_at=CURRENT_TIMESTAMP "
+            "WHERE tool_id=? AND dept_code=?",
+            (encrypted, who, tool_id, body.dept_code),
+        )
+        conn.commit()
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/mcp/tools/{tool_id}/config/{dept_code}")
+async def get_mcp_tool_config(tool_id: int, dept_code: str, p: dict = Depends(current_user)):
+    if p.get("role") not in ("root", "dept_admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins only")
+    with db_conn() as conn:
+        row = conn.execute(
+            "SELECT config_json FROM mcp_tool_configs WHERE tool_id=? AND dept_code=?",
+            (tool_id, dept_code),
+        ).fetchone()
+    if not row:
+        return {"configured": False, "fields": {}}
+    cfg = _decrypt_config(row["config_json"])
+    _SENSITIVE = ("password", "key", "secret", "token", "webhook")
+    redacted = {
+        k: "***" if any(s in k.lower() for s in _SENSITIVE) else v
+        for k, v in cfg.items()
+    }
+    return {"configured": True, "fields": redacted}
+
+
+@app.post("/api/v1/mcp/run")
+async def run_mcp_action(body: McpRunRequest, p: dict = Depends(current_user)):
+    with db_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM mcp_tools WHERE id=? AND is_enabled=1", (body.tool_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Tool not found or disabled")
+    tool = dict(row)
+    user_dept = p.get("department", "general")
+
+    if not _can_run_tool(p.get("role", "user"), tool["min_role"], user_dept, tool.get("dept_scope")):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient role for this tool")
+
+    config: dict = {}
+    if tool["tool_type"] in ("slack", "email"):
+        with db_conn() as conn:
+            cfg_row = conn.execute(
+                "SELECT config_json FROM mcp_tool_configs WHERE tool_id=? AND dept_code=?",
+                (body.tool_id, user_dept),
+            ).fetchone()
+        if cfg_row:
+            config = _decrypt_config(cfg_row["config_json"])
+
+    run_status, error_msg, result = "ok", None, {}
+    try:
+        from mcp_runners import dispatch as _mcp_dispatch
+        result = _mcp_dispatch(tool["tool_type"], config, body.result_text, body.query, body.user_params)
+    except Exception as exc:
+        run_status = "error"
+        error_msg  = str(exc)
+        logger.error("MCP run error tool_id=%s type=%s: %s", body.tool_id, tool["tool_type"], exc)
+
+    with db_conn() as conn:
+        conn.execute(
+            "INSERT INTO mcp_action_log (tool_id,user_id,dept_code,query_snippet,status,error_msg) "
+            "VALUES (?,?,?,?,?,?)",
+            (body.tool_id, p.get("user_id"), user_dept, body.query[:200], run_status, error_msg),
+        )
+        conn.commit()
+
+    if run_status == "error":
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, error_msg or "Tool execution failed")
+
+    return {"status": "ok", **result}
+
+
+@app.get("/api/v1/mcp/logs")
+async def get_mcp_logs(limit: int = 50, p: dict = Depends(current_user)):
+    if p.get("role") not in ("root", "dept_admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins only")
+    with db_conn() as conn:
+        rows = conn.execute(
+            "SELECT l.id,l.tool_id,t.name as tool_name,l.user_id,l.dept_code,"
+            "l.query_snippet,l.status,l.error_msg,l.ran_at "
+            "FROM mcp_action_log l LEFT JOIN mcp_tools t ON l.tool_id=t.id "
+            "ORDER BY l.ran_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return {"logs": [dict(r) for r in rows]}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

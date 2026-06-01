@@ -20,7 +20,7 @@ output "acr_login_server" {
 
 output "acr_push_commands" {
   description = "Commands to push images to ACR"
-  value = <<-EOT
+  value       = <<-EOT
     az acr login --name ${azurerm_container_registry.main.name}
 
     # Backend

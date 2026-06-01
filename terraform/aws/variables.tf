@@ -97,15 +97,15 @@ variable "redis_node_type" {
 # ── ECS ───────────────────────────────────────────────────────────────────────
 
 variable "backend_cpu" {
-  description = "CPU units for backend Fargate task (1024 = 1 vCPU)"
+  description = "CPU units for backend Fargate task (2048 = 2 vCPU — minimum for sentence-transformers)"
   type        = number
-  default     = 1024
+  default     = 2048
 }
 
 variable "backend_memory" {
-  description = "Memory (MB) for backend Fargate task"
+  description = "Memory (MB) for backend Fargate task (4096 MB minimum for sentence-transformers)"
   type        = number
-  default     = 2048
+  default     = 4096
 }
 
 variable "frontend_cpu" {
@@ -144,4 +144,69 @@ variable "certificate_arn" {
   description = "ACM certificate ARN for HTTPS (required if domain_name is set)"
   type        = string
   default     = ""
+}
+
+# ── MCP / Security ────────────────────────────────────────────────────────────
+
+variable "mcp_encryption_key" {
+  description = "Separate Fernet key for MCP tool credential encryption. Must be distinct from jwt_secret so JWT rotation doesn't invalidate stored tool configs."
+  type        = string
+  sensitive   = true
+}
+
+# ── OIDC / Active Directory SSO ───────────────────────────────────────────────
+
+variable "oidc_client_id" {
+  description = "Microsoft Entra ID (Azure AD) application (client) ID for SSO"
+  type        = string
+  default     = ""
+}
+
+variable "oidc_client_secret" {
+  description = "Microsoft Entra ID client secret for SSO"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "oidc_authority" {
+  description = "OIDC authority URL, e.g. https://login.microsoftonline.com/<tenant-id>"
+  type        = string
+  default     = ""
+}
+
+variable "oidc_redirect_uri" {
+  description = "OAuth callback URL — must match the redirect URI registered in Entra ID"
+  type        = string
+  default     = ""
+}
+
+# ── Observability ─────────────────────────────────────────────────────────────
+
+variable "sentry_dsn" {
+  description = "Sentry DSN for error tracking (leave blank to disable)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "posthog_key" {
+  description = "PostHog project API key for product analytics (leave blank to disable)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# ── Grafana ───────────────────────────────────────────────────────────────────
+
+variable "grafana_workspace_name" {
+  description = "Amazon Managed Grafana workspace name"
+  type        = string
+  default     = "huron-observability"
+}
+
+variable "grafana_account_access_type" {
+  description = "CURRENT_ACCOUNT or ORGANIZATION"
+  type        = string
+  default     = "CURRENT_ACCOUNT"
 }

@@ -42,6 +42,12 @@ variable "jwt_secret" {
   sensitive   = true
 }
 
+variable "mcp_encryption_key" {
+  description = "MCP tool encryption key (minimum 32 characters)"
+  type        = string
+  sensitive   = true
+}
+
 variable "jwt_expiration_hours" {
   description = "JWT token expiration in hours"
   type        = number

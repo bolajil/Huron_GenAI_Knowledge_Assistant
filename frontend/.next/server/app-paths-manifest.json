@@ -1,1 +1,8 @@
-{}
+{
+  "/page": "app/page.js",
+  "/mfa/page": "app/mfa/page.js",
+  "/dashboard/chat/page": "app/dashboard/chat/page.js",
+  "/dashboard/agent/page": "app/dashboard/agent/page.js",
+  "/dashboard/query/page": "app/dashboard/query/page.js",
+  "/dashboard/page": "app/dashboard/page.js"
+}

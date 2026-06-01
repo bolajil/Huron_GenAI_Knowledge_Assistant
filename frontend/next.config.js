@@ -2,12 +2,16 @@
 const nextConfig = {
   reactStrictMode: true,
 
-  // API rewrites to FastAPI backend
+  // Required for `docker run node server.js` (Dockerfile.production Stage 3)
+  output: 'standalone',
+
+  // API rewrites to FastAPI backend — BACKEND_URL overridden in containers
   async rewrites() {
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8004';
     return [
       {
         source: '/api/v1/:path*',
-        destination: 'http://localhost:8000/api/v1/:path*',
+        destination: `${backendUrl}/api/v1/:path*`,
       },
     ];
   },

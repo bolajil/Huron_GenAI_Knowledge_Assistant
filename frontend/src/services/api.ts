@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -168,6 +168,40 @@ export interface DocumentVersionEvent {
   ingested_at: string;
 }
 
+export interface McpTool {
+  id: number;
+  name: string;
+  category: string;
+  description: string;
+  tool_type: string;
+  dept_scope: string | null;
+  min_role: string;
+  is_enabled: boolean;
+  created_by: string;
+  created_at: string;
+  configured: boolean;
+}
+
+export interface McpActionLog {
+  id: number;
+  tool_id: number;
+  tool_name: string;
+  user_id: number;
+  dept_code: string;
+  query_snippet: string;
+  status: string;
+  error_msg: string | null;
+  ran_at: string;
+}
+
+export interface McpRunResult {
+  status: string;
+  detail?: string;
+  analysis?: string;
+  filename?: string;
+  content_base64?: string;
+}
+
 export interface AccessRequest {
   id: number;
   requester_id: number;
@@ -189,6 +223,13 @@ const getAuthHeader = (): HeadersInit => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+function clearSessionAndRedirect() {
+  localStorage.removeItem("auth_token");
+  localStorage.removeItem("user");
+  localStorage.removeItem("mfa_verified");
+  if (typeof window !== "undefined") window.location.href = "/";
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -199,6 +240,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   });
   if (!response.ok) {
+    // Token expired or revoked — clear session immediately and redirect to login.
+    // Skip on the login and validate endpoints themselves to avoid loops.
+    if (
+      response.status === 401 &&
+      !path.includes("/auth/login") &&
+      !path.includes("/auth/validate")
+    ) {
+      clearSessionAndRedirect();
+      throw new Error("Session expired. Please log in again.");
+    }
     const err = await response.json().catch(() => ({ detail: response.statusText }));
     const detail = err.detail;
     const message =
@@ -513,6 +564,58 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+
+  // ── MCP Tools ────────────────────────────────────────────────────────────────
+
+  async listMcpTools(): Promise<{ tools: McpTool[] }> {
+    return request("/api/v1/mcp/tools");
+  },
+
+  async createMcpTool(payload: {
+    name: string; category: string; description: string;
+    tool_type: string; dept_scope?: string; min_role?: string;
+  }): Promise<{ status: string; tool: McpTool }> {
+    return request("/api/v1/mcp/tools", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  async updateMcpTool(
+    id: number,
+    updates: { name?: string; description?: string; dept_scope?: string; min_role?: string; is_enabled?: boolean }
+  ): Promise<{ status: string }> {
+    return request(`/api/v1/mcp/tools/${id}`, { method: "PATCH", body: JSON.stringify(updates) });
+  },
+
+  async deleteMcpTool(id: number): Promise<{ status: string }> {
+    return request(`/api/v1/mcp/tools/${id}`, { method: "DELETE" });
+  },
+
+  async getMcpToolConfig(toolId: number, deptCode: string): Promise<{ configured: boolean; fields: Record<string, string> }> {
+    return request(`/api/v1/mcp/tools/${toolId}/config/${deptCode}`);
+  },
+
+  async setMcpToolConfig(
+    toolId: number,
+    deptCode: string,
+    config: Record<string, string>
+  ): Promise<{ status: string }> {
+    return request(`/api/v1/mcp/tools/${toolId}/config`, {
+      method: "PUT",
+      body: JSON.stringify({ dept_code: deptCode, config }),
+    });
+  },
+
+  async runMcpAction(payload: {
+    tool_id: number;
+    result_text: string;
+    query: string;
+    user_params?: Record<string, string>;
+  }): Promise<McpRunResult> {
+    return request("/api/v1/mcp/run", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  async getMcpLogs(limit = 50): Promise<{ logs: McpActionLog[] }> {
+    return request(`/api/v1/mcp/logs?limit=${limit}`);
   },
 
   // ── Health ───────────────────────────────────────────────────────────────────

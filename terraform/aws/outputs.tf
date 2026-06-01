@@ -1,21 +1,21 @@
 output "alb_dns_name" {
   description = "Application Load Balancer DNS name (use this if no custom domain)"
-  value       = "https://${aws_lb.main.dns_name}"
+  value       = "http://${aws_lb.main.dns_name}"
 }
 
 output "frontend_url" {
   description = "Frontend application URL"
-  value       = "https://${aws_lb.main.dns_name}"
+  value       = var.certificate_arn != "" ? "https://${aws_lb.main.dns_name}" : "http://${aws_lb.main.dns_name}"
 }
 
 output "backend_url" {
   description = "Backend API URL"
-  value       = "https://${aws_lb.main.dns_name}/api"
+  value       = var.certificate_arn != "" ? "https://${aws_lb.main.dns_name}/api" : "http://${aws_lb.main.dns_name}/api"
 }
 
 output "api_docs_url" {
-  description = "Swagger UI — interactive API documentation"
-  value       = "https://${aws_lb.main.dns_name}/docs"
+  description = "Swagger UI - interactive API documentation"
+  value       = var.certificate_arn != "" ? "https://${aws_lb.main.dns_name}/docs" : "http://${aws_lb.main.dns_name}/docs"
 }
 
 output "ecr_backend_url" {

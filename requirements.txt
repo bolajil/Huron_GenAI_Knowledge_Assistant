@@ -48,3 +48,6 @@ python-multipart==0.0.6
 slowapi==0.1.9
 redis==5.0.1
 cryptography==41.0.7
+
+# MCP Action Layer
+fpdf2>=2.7.0

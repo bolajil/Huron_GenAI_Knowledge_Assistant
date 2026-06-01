@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Search, Loader2, FileText, AlertCircle, Lock,
   ThumbsUp, ThumbsDown, ShieldAlert, Clock, ChevronLeft,
@@ -9,6 +9,7 @@ import {
 import { api } from "../../services/api";
 import type { QueryResponse, SourceGuard, Conversation } from "../../services/api";
 import { useAuth } from "../../contexts/auth-context";
+import ActionBar from "../mcp/ActionBar";
 
 const ALL_DEPARTMENTS = [
   { value: "hr",         label: "Human Resources" },
@@ -51,11 +52,33 @@ export function QueryAssistant() {
   const [history, setHistory]           = useState<Conversation[]>([]);
   const [historyOpen, setHistoryOpen]   = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const autoRestored = useRef(false);
 
   const loadHistory = useCallback(async () => {
     try {
       const { conversations } = await api.listConversations("query");
       setHistory(conversations);
+
+      if (!autoRestored.current && conversations.length > 0) {
+        autoRestored.current = true;
+        const latest = conversations[0];
+        const { messages } = await api.getMessages(latest.id);
+        const userMsg      = messages.find((m) => m.role === "user");
+        const assistantMsg = messages.find((m) => m.role === "assistant");
+        if (userMsg && assistantMsg) {
+          setQuery(userMsg.content);
+          setResult({
+            status:       "ok",
+            query:        userMsg.content,
+            results:      assistantMsg.content,
+            sources:      [],
+            source:       (assistantMsg.source as ResultState["source"]) ?? "rag",
+            source_label: assistantMsg.source_label,
+            queryText:    userMsg.content,
+            dept:         latest.dept,
+          });
+        }
+      }
     } catch {
       // silently ignore — history is non-critical
     } finally {
@@ -425,6 +448,7 @@ export function QueryAssistant() {
                   </span>
                 )}
               </div>
+              <ActionBar resultText={result.results} query={result.queryText} />
             </div>
           </div>
         )}

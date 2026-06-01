@@ -13,8 +13,8 @@ resource "random_string" "suffix" {
 }
 
 locals {
-  prefix      = "${var.project_name}-${var.environment}"
-  suffix      = random_string.suffix.result
+  prefix = "${var.project_name}-${var.environment}"
+  suffix = random_string.suffix.result
   common_tags = {
     project     = var.project_name
     environment = var.environment
@@ -137,19 +137,19 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
 }
 
 resource "azurerm_postgresql_flexible_server" "main" {
-  name                   = "${local.prefix}-postgres-${local.suffix}"
-  resource_group_name    = azurerm_resource_group.main.name
-  location               = azurerm_resource_group.main.location
-  version                = "15"
-  delegated_subnet_id    = azurerm_subnet.database.id
-  private_dns_zone_id    = azurerm_private_dns_zone.postgres.id
-  administrator_login    = var.postgres_admin_user
-  administrator_password = var.postgres_admin_password
-  sku_name               = var.postgres_sku
-  storage_mb             = var.postgres_storage_mb
-  backup_retention_days  = 7
+  name                         = "${local.prefix}-postgres-${local.suffix}"
+  resource_group_name          = azurerm_resource_group.main.name
+  location                     = azurerm_resource_group.main.location
+  version                      = "15"
+  delegated_subnet_id          = azurerm_subnet.database.id
+  private_dns_zone_id          = azurerm_private_dns_zone.postgres.id
+  administrator_login          = var.postgres_admin_user
+  administrator_password       = var.postgres_admin_password
+  sku_name                     = var.postgres_sku
+  storage_mb                   = var.postgres_storage_mb
+  backup_retention_days        = 7
   geo_redundant_backup_enabled = false
-  tags                   = local.common_tags
+  tags                         = local.common_tags
 
   depends_on = [azurerm_private_dns_zone_virtual_network_link.postgres]
 }
@@ -230,6 +230,12 @@ resource "azurerm_key_vault_secret" "postgres_password" {
   key_vault_id = azurerm_key_vault.main.id
 }
 
+resource "azurerm_key_vault_secret" "mcp_encryption_key" {
+  name         = "mcp-encryption-key"
+  value        = var.mcp_encryption_key
+  key_vault_id = azurerm_key_vault.main.id
+}
+
 # ── Storage Account (document blobs) ──────────────────────────────────────────
 
 resource "azurerm_storage_account" "main" {
@@ -296,8 +302,8 @@ resource "azurerm_container_app" "backend" {
   }
 
   registry {
-    server               = azurerm_container_registry.main.login_server
-    identity             = azurerm_user_assigned_identity.backend.id
+    server   = azurerm_container_registry.main.login_server
+    identity = azurerm_user_assigned_identity.backend.id
   }
 
   ingress {
@@ -359,24 +365,28 @@ resource "azurerm_container_app" "backend" {
         value = azurerm_application_insights.main.connection_string
       }
       env {
+        name  = "MCP_ENCRYPTION_KEY"
+        value = var.mcp_encryption_key
+      }
+      env {
         name  = "PORT"
         value = "8004"
       }
 
       liveness_probe {
-        path             = "/health"
-        port             = 8004
-        transport        = "HTTP"
-        initial_delay    = 15
-        interval_seconds = 30
+        path                    = "/health"
+        port                    = 8004
+        transport               = "HTTP"
+        initial_delay           = 15
+        interval_seconds        = 30
         failure_count_threshold = 3
       }
 
       readiness_probe {
-        path             = "/health"
-        port             = 8004
-        transport        = "HTTP"
-        interval_seconds = 10
+        path                    = "/health"
+        port                    = 8004
+        transport               = "HTTP"
+        interval_seconds        = 10
         failure_count_threshold = 3
       }
     }

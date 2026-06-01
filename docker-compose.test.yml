@@ -1,0 +1,77 @@
+# Integration test environment — PostgreSQL + Redis, mirrors production topology.
+# Usage: docker compose -f docker-compose.test.yml up -d && make test-int
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5437:5432"           # 5437 on host avoids clash with huron-postgres (5436)
+    environment:
+      POSTGRES_DB: huron_test
+      POSTGRES_USER: huron
+      POSTGRES_PASSWORD: hurontest
+    volumes:
+      - pg_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U huron -d huron_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"           # 6380 on host avoids clash with any local Redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.production
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8004"]
+    ports:
+      - "8005:8004"           # 8005 on host — don't shadow local dev server
+    environment:
+      - APP_ENV=test
+      - DATABASE_URL=postgresql://huron:hurontest@postgres:5432/huron_test
+      - JWT_SECRET_KEY=test-jwt-secret-key-32-bytes-xx
+      - MCP_ENCRYPTION_KEY=test-mcp-key-32-bytes-xxxxxxxx
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-test-placeholder}
+      - PINECONE_API_KEY=${PINECONE_API_KEY:-}
+      - VECTOR_BACKEND=faiss
+      - PYTHONPATH=/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.production
+      args:
+        NEXT_PUBLIC_API_URL: "http://localhost:8005"   # test backend host port
+    ports:
+      - "3002:3000"           # 3002 on host — 3001 is taken by hca-clinical-frontend
+    environment:
+      - BACKEND_URL=http://backend:8004
+      - NODE_ENV=production
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pg_test_data:
