@@ -21,7 +21,7 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: requirements_production.txt
-      - run: pip install -r requirements_production.txt
+      - run: pip install -r requirements_production.txt pytest
       - name: Run unit tests
         run: python -m pytest tests/unit/ -v --tb=short --junitxml=reports/unit.xml
         env:

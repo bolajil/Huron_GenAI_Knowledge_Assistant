@@ -33,8 +33,7 @@ archive_cleanup_*/uploads/
 *.env.bak
 !.env.example
 
-# Streamlit secrets
-.streamlit/secrets.toml
+# Legacy Streamlit (no longer used)
 .streamlit/
 
 # Config secrets
@@ -119,6 +118,7 @@ logs/
 # =============================================================================
 node_modules/
 package-lock.json
+!frontend/package-lock.json
 .next/
 out/
 .vercel/
