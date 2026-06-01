@@ -1,0 +1,51 @@
+# Local development — SQLite + in-memory everything. No external dependencies.
+# Usage: docker compose -f docker-compose.local.yml up --build
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .                              # project root — gives Dockerfile access to requirements_production.txt
+      dockerfile: backend/Dockerfile.production
+    # Mount source to /workspace so the venv at /app/venv is not overwritten
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8004",
+              "--reload", "--app-dir", "/workspace"]
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./backend:/workspace    # live-reload source (keeps /app/venv intact)
+      - ./data:/workspace/data  # SQLite + uploaded docs persist on host
+    environment:
+      - APP_ENV=local
+      - PYTHONPATH=/workspace
+      - DATABASE_URL=           # empty → SQLite fallback in main.py
+      - SQLITE_DB_PATH=/workspace/data/huron_local.db
+      - JWT_SECRET_KEY=local-dev-secret-change-me
+      - MCP_ENCRYPTION_KEY=local-mcp-key-change-me
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - PINECONE_API_KEY=${PINECONE_API_KEY:-}
+      - PINECONE_ENV=${PINECONE_ENV:-}
+      - VECTOR_BACKEND=faiss
+      - REDIS_URL=              # empty → in-memory JWT blacklist
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.production
+      args:
+        # Baked into the JS bundle at build time — browser calls backend directly
+        # on the host-mapped port. No container-internal proxy needed for local dev.
+        NEXT_PUBLIC_API_URL: "http://localhost:8004"
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_URL=http://backend:8004
+      - NODE_ENV=production
+    depends_on:
+      backend:
+        condition: service_healthy

@@ -7,7 +7,7 @@ const systemStatus = [
   { name: "Vector DB (FAISS)", status: "healthy", latency: "12ms", uptime: "100%" },
   { name: "Vector DB (Pinecone)", status: "healthy", latency: "89ms", uptime: "99.8%" },
   { name: "LLM Service (OpenAI)", status: "healthy", latency: "234ms", uptime: "99.7%" },
-  { name: "Redis Cache", status: "warning", latency: "8ms", uptime: "98.5%" },
+  { name: "Redis Cache", status: "healthy", latency: "8ms", uptime: "99.9%" },
   { name: "Celery Workers", status: "healthy", latency: "N/A", uptime: "100%" },
 ];
 
@@ -112,15 +112,8 @@ export default function SystemMonitoringPage() {
           <AlertTriangle className="h-5 w-5 text-yellow-500" />
           Recent Alerts
         </h2>
-        <div className="space-y-3">
-          <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-            <p className="text-sm font-medium text-yellow-500">Redis cache connection unstable</p>
-            <p className="text-xs text-muted-foreground mt-1">2 minutes ago</p>
-          </div>
-          <div className="p-3 rounded-lg bg-muted">
-            <p className="text-sm font-medium">OpenAI rate limit warning</p>
-            <p className="text-xs text-muted-foreground mt-1">1 hour ago - Resolved</p>
-          </div>
+        <div className="p-6 text-center text-sm text-muted-foreground">
+          No active alerts.
         </div>
       </div>
     </div>

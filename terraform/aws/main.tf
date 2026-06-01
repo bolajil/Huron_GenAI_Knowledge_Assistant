@@ -167,6 +167,25 @@ resource "aws_security_group" "frontend" {
   }
 }
 
+resource "aws_security_group" "vpc_endpoints" {
+  name        = "${local.prefix}-endpoints-sg"
+  description = "Allow HTTPS from ECS tasks to Interface VPC endpoints"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.backend.id, aws_security_group.frontend.id]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 resource "aws_security_group" "rds" {
   name        = "${local.prefix}-rds-sg"
   description = "Allow PostgreSQL from ECS tasks"
@@ -204,6 +223,7 @@ resource "aws_security_group" "redis" {
 resource "aws_ecr_repository" "backend" {
   name                 = "${local.prefix}-backend"
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -213,6 +233,7 @@ resource "aws_ecr_repository" "backend" {
 resource "aws_ecr_repository" "frontend" {
   name                 = "${local.prefix}-frontend"
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -239,7 +260,7 @@ resource "aws_ecr_lifecycle_policy" "backend" {
 
 resource "aws_secretsmanager_secret" "app_secrets" {
   name                    = "${local.prefix}/app-secrets"
-  recovery_window_in_days = 7
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "app_secrets" {
@@ -263,7 +284,7 @@ resource "aws_db_subnet_group" "main" {
 resource "aws_db_instance" "main" {
   identifier              = "${local.prefix}-postgres"
   engine                  = "postgres"
-  engine_version          = "15.4"
+  engine_version          = "15.12"
   instance_class          = var.db_instance_class
   allocated_storage       = var.db_allocated_storage
   max_allocated_storage   = 100
@@ -274,10 +295,9 @@ resource "aws_db_instance" "main" {
   vpc_security_group_ids  = [aws_security_group.rds.id]
   multi_az                = var.db_multi_az
   storage_encrypted       = true
-  backup_retention_period = 7
-  deletion_protection     = true
-  skip_final_snapshot     = false
-  final_snapshot_identifier = "${local.prefix}-final-snapshot"
+  backup_retention_period = 0
+  deletion_protection     = false
+  skip_final_snapshot     = true
   apply_immediately       = false
 
   tags = { Name = "${local.prefix}-postgres" }
@@ -326,6 +346,20 @@ resource "aws_iam_role" "ecs_task_execution" {
 resource "aws_iam_role_policy_attachment" "ecs_execution" {
   role       = aws_iam_role.ecs_task_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "ecs_execution_secrets" {
+  name = "${local.prefix}-execution-secrets-policy"
+  role = aws_iam_role.ecs_task_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = [aws_secretsmanager_secret.app_secrets.arn]
+    }]
+  })
 }
 
 resource "aws_iam_role" "ecs_task" {
@@ -514,7 +548,7 @@ resource "aws_lb" "main" {
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.public[*].id
 
-  enable_deletion_protection = true
+  enable_deletion_protection = false
   enable_http2               = true
 }
 
@@ -562,35 +596,44 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
 
   default_action {
-    type = "redirect"
-    redirect {
-      port        = "443"
-      protocol    = "HTTPS"
-      status_code = "HTTP_301"
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.frontend.arn
+  }
+}
+
+resource "aws_lb_listener_rule" "http_backend_api" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.backend.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/*", "/health", "/docs", "/openapi.json"]
     }
   }
 }
 
 resource "aws_lb_listener" "https" {
+  count             = var.certificate_arn != "" ? 1 : 0
   load_balancer_arn = aws_lb.main.arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  certificate_arn   = var.certificate_arn != "" ? var.certificate_arn : null
+  certificate_arn   = var.certificate_arn
 
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.frontend.arn
   }
-
-  # Route /api/* and /health to backend
-  lifecycle {
-    ignore_changes = [default_action]
-  }
 }
 
 resource "aws_lb_listener_rule" "backend_api" {
-  listener_arn = aws_lb_listener.https.arn
+  count        = var.certificate_arn != "" ? 1 : 0
+  listener_arn = aws_lb_listener.https[0].arn
   priority     = 10
 
   action {
@@ -757,4 +800,266 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.main.identifier
   }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VPC ENDPOINTS — keep sensitive traffic off the public internet and reduce
+# NAT Gateway data-transfer costs for S3, ECR, Secrets Manager, and CloudWatch.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.private.id]
+
+  tags = { Name = "${local.prefix}-s3-endpoint" }
+}
+
+resource "aws_vpc_endpoint" "ecr_api" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = { Name = "${local.prefix}-ecr-api-endpoint" }
+}
+
+resource "aws_vpc_endpoint" "ecr_dkr" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.dkr"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = { Name = "${local.prefix}-ecr-dkr-endpoint" }
+}
+
+resource "aws_vpc_endpoint" "secretsmanager" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = { Name = "${local.prefix}-secretsmanager-endpoint" }
+}
+
+resource "aws_vpc_endpoint" "logs" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = { Name = "${local.prefix}-logs-endpoint" }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WAF — OWASP core rule set + IP rate limiting on the ALB.
+# Applied in Phase 1 (not deferred) because the clinical department has HIPAA
+# PHI classification and requires a WAF before data goes live.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+resource "aws_wafv2_web_acl" "main" {
+  name        = "${local.prefix}-waf"
+  scope       = "REGIONAL"   # CLOUDFRONT scope would require us-east-1 provider alias
+  description = "Huron GenAI WAF - OWASP core rules + rate limiting"
+
+  default_action {
+    allow {}
+  }
+
+  # AWS Managed Rules — Common (OWASP Top 10 equivalent)
+  rule {
+    name     = "AWSManagedRulesCommonRuleSet"
+    priority = 10
+
+    override_action {
+      none {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesCommonRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.prefix}-waf-common"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # AWS Managed Rules — Known Bad Inputs
+  rule {
+    name     = "AWSManagedRulesKnownBadInputsRuleSet"
+    priority = 20
+
+    override_action {
+      none {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesKnownBadInputsRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.prefix}-waf-bad-inputs"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Rate limit: 2000 req/5 min per IP (auth endpoints are separately rate-limited in code)
+  rule {
+    name     = "RateLimitPerIP"
+    priority = 30
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        limit              = 2000
+        aggregate_key_type = "IP"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.prefix}-waf-rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "${local.prefix}-waf"
+    sampled_requests_enabled   = true
+  }
+
+  tags = { Environment = var.environment }
+}
+
+resource "aws_wafv2_web_acl_association" "alb" {
+  resource_arn = aws_lb.main.arn
+  web_acl_arn  = aws_wafv2_web_acl.main.arn
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AMAZON MANAGED GRAFANA — external monitoring with PHI-compliant data residency.
+# Dashboards: ECS metrics, ALB latency, RDS performance, cost, API response times.
+# Uses IAM Identity Center (SSO) for AD-compatible authentication.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# aws_grafana_workspace requires Amazon Managed Grafana subscription (paid feature).
+# Enable by adding: create_grafana = true to terraform.tfvars once the AWS account
+# has Grafana enabled via the AWS Console (Services → Amazon Grafana → Get started).
+# resource "aws_grafana_workspace" "main" { ... }
+
+resource "aws_iam_role" "grafana" {
+  name = "${local.prefix}-grafana-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "grafana.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# ── CI/CD IAM User (GitHub Actions) ──────────────────────────────────────────
+# After apply, create access keys: AWS Console → IAM → cicd-user → Security credentials
+# Then add to GitHub: Settings → Secrets → AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+
+resource "aws_iam_user" "cicd" {
+  name = "${local.prefix}-cicd-user"
+  tags = { Environment = var.environment }
+}
+
+resource "aws_iam_user_policy" "cicd" {
+  name = "${local.prefix}-cicd-policy"
+  user = aws_iam_user.cicd.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:PutImage"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:UpdateService",
+          "ecs:DescribeServices",
+          "ecs:DescribeTaskDefinition",
+          "ecs:RegisterTaskDefinition"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
+        Resource = [aws_iam_role.ecs_task_execution.arn, aws_iam_role.ecs_task.arn]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "grafana_cloudwatch" {
+  name = "${local.prefix}-grafana-cloudwatch"
+  role = aws_iam_role.grafana.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:DescribeAlarms",
+          "cloudwatch:GetMetricData",
+          "cloudwatch:GetMetricStatistics",
+          "cloudwatch:ListMetrics",
+          "logs:DescribeLogGroups",
+          "logs:GetLogEvents",
+          "logs:StartQuery",
+          "logs:GetQueryResults",
+          "ec2:DescribeInstances",
+          "ecs:DescribeClusters",
+          "ecs:DescribeServices",
+          "ecs:DescribeTasks",
+          "rds:DescribeDBInstances",
+          "elasticache:DescribeCacheClusters",
+          "pricing:GetProducts",
+          "ce:GetCostAndUsage"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }

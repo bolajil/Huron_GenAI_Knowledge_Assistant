@@ -197,3 +197,7 @@ _archived/
 # =============================================================================
 backups/
 *.backup
+*.tfvars
+*.tfstate
+*.tfstate.backup
+.terraform/

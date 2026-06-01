@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Bot, Play, Square, Search, GitCompare,
   Shield, CheckCircle, AlertTriangle, Clock,
@@ -168,11 +168,20 @@ export default function AgentPage() {
   const [history, setHistory]               = useState<Conversation[]>([]);
   const [historyOpen, setHistoryOpen]       = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const autoRestored = useRef(false);
 
   const loadHistory = useCallback(async () => {
     try {
       const { conversations } = await api.listConversations("agent");
       setHistory(conversations);
+
+      if (!autoRestored.current && conversations.length > 0) {
+        autoRestored.current = true;
+        const latest = conversations[0];
+        const { messages } = await api.getMessages(latest.id);
+        const userMsg = messages.find((m) => m.role === "user");
+        if (userMsg) setQuery(userMsg.content);
+      }
     } catch {
       // non-critical
     } finally {

@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1.6
+# ─── Stage 1: deps — install node_modules with cache mount ──────────────────
+FROM node:20-alpine AS deps
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --prefer-offline
+
+# ─── Stage 2: builder — compile Next.js standalone bundle ────────────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy deps from Stage 1
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Build args injected at build time (baked into bundle for NEXT_PUBLIC_* vars)
+ARG NEXT_PUBLIC_API_URL=""
+ARG NEXT_PUBLIC_SENTRY_DSN=""
+ARG SENTRY_ORG=""
+ARG SENTRY_PROJECT=""
+# BACKEND_URL must be available when next.config.js runs during `npm run build`
+# because async rewrites() is evaluated at build time, not runtime.
+ARG BACKEND_URL=http://backend:8004
+
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+ENV BACKEND_URL=$BACKEND_URL
+
+RUN npm run build
+
+# ─── Stage 3: production runner — minimal image ───────────────────────────────
+FROM node:20-alpine AS runner
+
+RUN addgroup -S huron && adduser -S huron -G huron
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+# Backend URL is read by the Next.js rewrites at runtime (server side only)
+ENV BACKEND_URL="http://backend:8004"
+
+# Standalone output already contains only what's needed
+COPY --from=builder --chown=huron:huron /app/.next/standalone ./
+COPY --from=builder --chown=huron:huron /app/.next/static ./.next/static
+# public/ is optional — only copy if it exists (this project has none)
+RUN mkdir -p ./public
+
+USER huron
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD wget -qO- http://localhost:3000/ || exit 1
+
+CMD ["node", "server.js"]

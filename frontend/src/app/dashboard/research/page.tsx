@@ -16,9 +16,10 @@ import {
   ChevronLeft,
   Trash2,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api, InternalResult, WebResult, Conversation } from "@/services/api";
 import { useAuth } from "@/contexts/auth-context";
+import ActionBar from "@/components/mcp/ActionBar";
 
 export default function EnhancedResearchPage() {
   const { user } = useAuth();
@@ -46,11 +47,27 @@ export default function EnhancedResearchPage() {
   const [history, setHistory]           = useState<Conversation[]>([]);
   const [historyOpen, setHistoryOpen]   = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const autoRestored = useRef(false);
 
   const loadHistory = useCallback(async () => {
     try {
       const { conversations } = await api.listConversations("research");
       setHistory(conversations);
+
+      if (!autoRestored.current && conversations.length > 0) {
+        autoRestored.current = true;
+        const latest = conversations[0];
+        const { messages } = await api.getMessages(latest.id);
+        const userMsg      = messages.find((m) => m.role === "user");
+        const assistantMsg = messages.find((m) => m.role === "assistant");
+        if (userMsg && assistantMsg) {
+          setQuery(userMsg.content);
+          setSynthesis(assistantMsg.content);
+          setInternalResults([]);
+          setWebResults([]);
+          setHasResults(true);
+        }
+      }
     } catch {
       // non-critical
     } finally {
@@ -449,6 +466,8 @@ export default function EnhancedResearchPage() {
                 AI synthesis was not available for this query.
               </p>
             )}
+
+            {synthesis && <ActionBar resultText={synthesis} query={query} />}
           </div>
         </>
       )}
