@@ -1,3 +1,8 @@
+output "aws_region" {
+  description = "AWS region where resources are deployed"
+  value       = var.aws_region
+}
+
 output "alb_dns_name" {
   description = "Application Load Balancer DNS name (use this if no custom domain)"
   value       = "http://${aws_lb.main.dns_name}"
