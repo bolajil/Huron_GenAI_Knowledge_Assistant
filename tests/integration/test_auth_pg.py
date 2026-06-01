@@ -1,8 +1,9 @@
 """Auth flow integration tests against the running backend container (PostgreSQL + Redis)."""
+import os
 import pytest
 import requests
 
-BASE_URL = "http://localhost:8005"
+BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8004")
 
 
 @pytest.mark.integration
