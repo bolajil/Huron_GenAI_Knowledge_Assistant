@@ -1,11 +1,37 @@
-name: Deploy — Production (AWS)
+name: Deploy — Production (AWS) 🔵🟢
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLUE / GREEN deployment via AWS CodeDeploy
+#
+# Traffic shifting strategy: Canary 10% for 5 minutes → then 100%
+#   Step 1: 10% of prod traffic → Green (new version)
+#   Step 2: Monitor for 5 minutes (automated health checks run)
+#   Step 3: If healthy → shift remaining 90% to Green
+#   Step 4: Blue (old) tasks terminated
+#
+# Rollback: Go to AWS Console → CodeDeploy → Stop and rollback deployment
+#           Traffic instantly returns 100% to Blue (old version)
+#
+# Sequence required: dev → staging → prod (manual trigger only)
+# ─────────────────────────────────────────────────────────────────────────────
 
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type DEPLOY to confirm production deployment"
+        description: "Type DEPLOY to confirm production Blue/Green deployment"
         required: true
+      traffic_config:
+        description: "Traffic shifting strategy"
+        required: true
+        default: "CodeDeployDefault.ECSCanary10Percent5Minutes"
+        type: choice
+        options:
+          - CodeDeployDefault.ECSCanary10Percent5Minutes
+          - CodeDeployDefault.ECSCanary10Percent15Minutes
+          - CodeDeployDefault.ECSLinear10PercentEvery1Minutes
+          - CodeDeployDefault.ECSLinear10PercentEvery3Minutes
+          - CodeDeployDefault.ECSAllAtOnce
 
 concurrency:
   group: deploy-prod
@@ -13,29 +39,35 @@ concurrency:
 
 env:
   AWS_REGION: us-east-1
-  # Update when prod Terraform is applied
   ECR_BACKEND: 137738968757.dkr.ecr.us-east-1.amazonaws.com/huron-prod-backend
   ECR_FRONTEND: 137738968757.dkr.ecr.us-east-1.amazonaws.com/huron-prod-frontend
   ECS_CLUSTER: huron-prod-cluster
   BACKEND_SERVICE: huron-prod-backend
   FRONTEND_SERVICE: huron-prod-frontend
+  CODEDEPLOY_APP: huron-prod-backend
+  CODEDEPLOY_GROUP: huron-prod-backend-dg
   PROD_URL: ${{ vars.PROD_URL }}
 
 jobs:
+  # ── Gate: manual confirmation required ─────────────────────────────────────
   gate:
     name: Production Gate
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.confirm == 'DEPLOY' }}
     environment: production
     steps:
-      - run: echo "Production gate approved — deploying"
+      - run: |
+          echo "Production gate approved"
+          echo "Strategy: ${{ github.event.inputs.traffic_config }}"
 
+  # ── Build & push backend image ──────────────────────────────────────────────
   build-backend:
     name: Build & Push — Backend
     runs-on: ubuntu-latest
     needs: gate
     outputs:
       image: ${{ steps.meta.outputs.image }}
+      task_def_arn: ${{ steps.register.outputs.task_def_arn }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
@@ -57,7 +89,33 @@ jobs:
           tags: ${{ steps.meta.outputs.image }},${{ env.ECR_BACKEND }}:prod-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Register new ECS task definition
+        id: register
+        run: |
+          # Get current task definition and update image
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition ${{ env.BACKEND_SERVICE }} \
+            --query 'taskDefinition' --output json)
 
+          NEW_TASK_DEF=$(echo $TASK_DEF | python3 -c "
+          import sys, json
+          td = json.load(sys.stdin)
+          for c in td['containerDefinitions']:
+              if c['name'] == 'backend':
+                  c['image'] = '${{ steps.meta.outputs.image }}'
+          for key in ['taskDefinitionArn','revision','status','requiresAttributes',
+                      'compatibilities','registeredAt','registeredBy']:
+              td.pop(key, None)
+          print(json.dumps(td))
+          ")
+
+          ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "task_def_arn=$ARN" >> $GITHUB_OUTPUT
+          echo "Registered: $ARN"
+
+  # ── Build & push frontend image ─────────────────────────────────────────────
   build-frontend:
     name: Build & Push — Frontend
     runs-on: ubuntu-latest
@@ -89,36 +147,99 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ── Blue/Green deploy via CodeDeploy ────────────────────────────────────────
   deploy:
-    name: Deploy to ECS Production
+    name: Blue/Green Deploy — CodeDeploy
     runs-on: ubuntu-latest
     needs: [build-backend, build-frontend]
     steps:
+      - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Force redeploy
+
+      - name: Create CodeDeploy appspec
         run: |
-          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.BACKEND_SERVICE }} --force-new-deployment --region ${{ env.AWS_REGION }}
-          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.FRONTEND_SERVICE }} --force-new-deployment --region ${{ env.AWS_REGION }}
-      - name: Wait for stable
-        run: |
-          aws ecs wait services-stable \
+          # Get subnet and security group from running service
+          SERVICE=$(aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.BACKEND_SERVICE }} ${{ env.FRONTEND_SERVICE }} \
-            --region ${{ env.AWS_REGION }}
-      - name: Health check
+            --services ${{ env.BACKEND_SERVICE }} \
+            --query 'services[0]' --output json)
+
+          SUBNETS=$(echo $SERVICE | python3 -c "
+          import sys,json
+          s = json.load(sys.stdin)
+          print(json.dumps(s['networkConfiguration']['awsvpcConfiguration']['subnets']))
+          ")
+          SG=$(echo $SERVICE | python3 -c "
+          import sys,json
+          s = json.load(sys.stdin)
+          print(s['networkConfiguration']['awsvpcConfiguration']['securityGroups'][0])
+          ")
+
+          cat > appspec-deploy.json << EOF
+          {
+            "version": 0.0,
+            "Resources": [{
+              "TargetService": {
+                "Type": "AWS::ECS::Service",
+                "Properties": {
+                  "TaskDefinition": "${{ needs.build-backend.outputs.task_def_arn }}",
+                  "LoadBalancerInfo": {
+                    "ContainerName": "backend",
+                    "ContainerPort": 8000
+                  },
+                  "NetworkConfiguration": {
+                    "AwsvpcConfiguration": {
+                      "Subnets": $SUBNETS,
+                      "SecurityGroups": ["$SG"],
+                      "AssignPublicIp": "DISABLED"
+                    }
+                  }
+                }
+              }
+            }]
+          }
+          EOF
+
+      - name: Create Blue/Green deployment
+        id: deploy
+        run: |
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name ${{ env.CODEDEPLOY_APP }} \
+            --deployment-group-name ${{ env.CODEDEPLOY_GROUP }} \
+            --deployment-config-name ${{ github.event.inputs.traffic_config }} \
+            --revision '{"revisionType":"AppSpecContent","appSpecContent":{"content":"'"$(cat appspec-deploy.json | tr -d '\n')"'"}}' \
+            --description "GitHub Actions — ${{ github.sha }}" \
+            --query 'deploymentId' --output text)
+
+          echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+          echo "Deployment ID: $DEPLOYMENT_ID"
+          echo "Strategy: ${{ github.event.inputs.traffic_config }}"
+          echo "Monitor at: https://console.aws.amazon.com/codesuite/codedeploy/deployments/$DEPLOYMENT_ID"
+
+      - name: Wait for deployment to complete
+        run: |
+          aws deploy wait deployment-successful \
+            --deployment-id ${{ steps.deploy.outputs.deployment_id }}
+
+      - name: Health check — Green environment
         run: |
           STATUS=$(curl -sf ${{ env.PROD_URL }}/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])")
-          [ "$STATUS" = "healthy" ] && echo "Health: $STATUS" || (echo "PROD HEALTH FAILED: $STATUS"; exit 1)
+          [ "$STATUS" = "healthy" ] && echo "Production health: $STATUS" || (echo "PROD HEALTH FAILED: $STATUS"; exit 1)
+
       - name: Summary
         run: |
-          echo "### Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "### Production Blue/Green Deployment Complete 🟢" >> $GITHUB_STEP_SUMMARY
           echo "| | |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
           echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Strategy** | ${{ github.event.inputs.traffic_config }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Deployment ID** | ${{ steps.deploy.outputs.deployment_id }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **URL** | ${{ env.PROD_URL }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Backend image** | ${{ needs.build-backend.outputs.image }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Frontend image** | ${{ needs.build-frontend.outputs.image }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Rollback:** AWS Console → CodeDeploy → Stop and rollback deployment" >> $GITHUB_STEP_SUMMARY
