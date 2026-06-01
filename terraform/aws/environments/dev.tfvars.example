@@ -1,0 +1,50 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Huron GenAI — DEV Environment Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Copy to dev.tfvars and fill in your values
+# Usage: terraform apply -var-file=environments/dev.tfvars
+
+# ── Environment ───────────────────────────────────────────────────────────────
+environment  = "dev"
+project_name = "huron"
+aws_region   = "us-east-1"
+
+# ── Free Tier (enabled for dev) ───────────────────────────────────────────────
+use_free_tier = true
+
+# ── Scaling (minimal for dev) ─────────────────────────────────────────────────
+backend_desired_count  = 1
+frontend_desired_count = 1
+backend_cpu            = 256
+backend_memory         = 512
+frontend_cpu           = 256
+frontend_memory        = 512
+
+# ── Database ──────────────────────────────────────────────────────────────────
+db_username          = "huron_dev_admin"
+db_password          = "DevPassword123!"  # Change this!
+db_name              = "huron_dev"
+db_allocated_storage = 20
+
+# ── API Keys (REQUIRED) ───────────────────────────────────────────────────────
+openai_api_key   = "sk-..."
+pinecone_api_key = "..."
+pinecone_index   = "huron-dev"
+jwt_secret       = "dev-jwt-secret-change-me-in-production"
+mcp_encryption_key = "dev-mcp-key-change-me"
+
+# ── Domain (optional for dev) ─────────────────────────────────────────────────
+# domain_name     = "dev.huron.example.com"
+# certificate_arn = ""
+# route53_zone_id = ""
+
+# ── CI/CD ─────────────────────────────────────────────────────────────────────
+enable_cicd              = true
+github_repo              = "your-org/huron-genai"
+github_branch            = "develop"
+enable_blue_green        = false  # Use rolling updates for dev
+
+# ── Observability (optional) ──────────────────────────────────────────────────
+# langfuse_public_key = ""
+# langfuse_secret_key = ""
+# sentry_dsn          = ""

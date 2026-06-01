@@ -1,0 +1,53 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Huron GenAI — STAGING Environment Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Copy to staging.tfvars and fill in your values
+# Usage: terraform apply -var-file=environments/staging.tfvars
+
+# ── Environment ───────────────────────────────────────────────────────────────
+environment  = "staging"
+project_name = "huron"
+aws_region   = "us-east-1"
+
+# ── Free Tier (disabled for staging — mirrors prod) ───────────────────────────
+use_free_tier = false
+
+# ── Scaling (moderate for staging) ────────────────────────────────────────────
+backend_desired_count  = 2
+frontend_desired_count = 2
+backend_cpu            = 512
+backend_memory         = 1024
+frontend_cpu           = 256
+frontend_memory        = 512
+
+# ── Database ──────────────────────────────────────────────────────────────────
+db_username                = "huron_staging_admin"
+db_password                = "StagingPassword456!"  # Change this!
+db_name                    = "huron_staging"
+db_allocated_storage       = 50
+db_instance_class          = "db.t3.small"
+db_multi_az                = false
+db_backup_retention_period = 3
+
+# ── API Keys (REQUIRED) ───────────────────────────────────────────────────────
+openai_api_key   = "sk-..."
+pinecone_api_key = "..."
+pinecone_index   = "huron-staging"
+jwt_secret       = "staging-jwt-secret-change-me"
+mcp_encryption_key = "staging-mcp-key-change-me"
+
+# ── Domain ────────────────────────────────────────────────────────────────────
+domain_name     = "staging.huron.example.com"
+certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/..."
+route53_zone_id = "Z1234567890ABC"
+
+# ── CI/CD ─────────────────────────────────────────────────────────────────────
+enable_cicd              = true
+github_repo              = "your-org/huron-genai"
+github_branch            = "staging"
+enable_blue_green        = true  # Blue/Green for staging validation
+
+# ── Observability ─────────────────────────────────────────────────────────────
+langfuse_public_key = "pk-lf-..."
+langfuse_secret_key = "sk-lf-..."
+sentry_dsn          = "https://...@sentry.io/..."

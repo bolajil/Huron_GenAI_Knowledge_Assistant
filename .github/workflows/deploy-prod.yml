@@ -21,7 +21,7 @@ env:
   ECS_CLUSTER: huron-prod-cluster
   BACKEND_SERVICE: huron-prod-backend
   FRONTEND_SERVICE: huron-prod-frontend
-  PROD_URL: https://api.huronconsultinggroup.com
+  PROD_URL: ${{ vars.PROD_URL }}
 
 jobs:
   gate:

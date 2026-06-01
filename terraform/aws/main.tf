@@ -18,6 +18,18 @@ resource "random_string" "suffix" {
 locals {
   prefix = "${var.project_name}-${var.environment}"
   azs    = slice(data.aws_availability_zones.available.names, 0, 2)
+
+  # Free tier fallback: when use_free_tier=true, override to free tier compatible values
+  rds_instance_class     = var.use_free_tier ? "db.t3.micro" : var.db_instance_class
+  rds_multi_az           = var.use_free_tier ? false : var.db_multi_az
+  rds_backup_retention   = var.use_free_tier ? 0 : var.db_backup_retention_period
+  rds_deletion_protection = var.use_free_tier ? false : var.db_deletion_protection
+  rds_skip_final_snapshot = var.use_free_tier ? true : var.db_skip_final_snapshot
+  rds_storage_encrypted  = var.use_free_tier ? false : var.db_storage_encrypted
+  
+  # ElastiCache free tier: single node, no replication
+  redis_num_clusters     = var.use_free_tier ? 1 : 2
+  redis_failover_enabled = var.use_free_tier ? false : true
 }
 
 # ── VPC ───────────────────────────────────────────────────────────────────────
@@ -271,6 +283,10 @@ resource "aws_secretsmanager_secret_version" "app_secrets" {
     PINECONE_INDEX       = var.pinecone_index
     JWT_SECRET           = var.jwt_secret
     DB_PASSWORD          = var.db_password
+    MCP_ENCRYPTION_KEY   = var.mcp_encryption_key
+    LANGFUSE_SECRET_KEY  = var.langfuse_secret_key
+    LANGSMITH_API_KEY    = var.langsmith_api_key
+    SENTRY_DSN           = var.sentry_dsn
   })
 }
 
@@ -285,19 +301,20 @@ resource "aws_db_instance" "main" {
   identifier              = "${local.prefix}-postgres"
   engine                  = "postgres"
   engine_version          = "15.12"
-  instance_class          = var.db_instance_class
+  instance_class          = local.rds_instance_class
   allocated_storage       = var.db_allocated_storage
-  max_allocated_storage   = 100
+  max_allocated_storage   = var.use_free_tier ? var.db_allocated_storage : 100
   db_name                 = var.db_name
   username                = var.db_username
   password                = var.db_password
   db_subnet_group_name    = aws_db_subnet_group.main.name
   vpc_security_group_ids  = [aws_security_group.rds.id]
-  multi_az                = var.db_multi_az
-  storage_encrypted       = true
-  backup_retention_period = 0
-  deletion_protection     = false
-  skip_final_snapshot     = true
+  multi_az                = local.rds_multi_az
+  storage_encrypted       = local.rds_storage_encrypted
+  backup_retention_period = local.rds_backup_retention
+  deletion_protection     = local.rds_deletion_protection
+  skip_final_snapshot     = local.rds_skip_final_snapshot
+  final_snapshot_identifier = local.rds_skip_final_snapshot ? null : "${local.prefix}-postgres-final-snapshot"
   apply_immediately       = false
 
   tags = { Name = "${local.prefix}-postgres" }
@@ -313,16 +330,16 @@ resource "aws_elasticache_subnet_group" "main" {
 resource "aws_elasticache_replication_group" "main" {
   replication_group_id       = "${local.prefix}-redis"
   description                = "Huron session cache and rate limiter"
-  node_type                  = var.redis_node_type
-  num_cache_clusters         = 2
-  automatic_failover_enabled = true
+  node_type                  = var.use_free_tier ? "cache.t3.micro" : var.redis_node_type
+  num_cache_clusters         = local.redis_num_clusters
+  automatic_failover_enabled = local.redis_failover_enabled
   engine                     = "redis"
   engine_version             = "7.0"
   port                       = 6379
   subnet_group_name          = aws_elasticache_subnet_group.main.name
   security_group_ids         = [aws_security_group.redis.id]
-  at_rest_encryption_enabled = true
-  transit_encryption_enabled = true
+  at_rest_encryption_enabled = var.use_free_tier ? false : true
+  transit_encryption_enabled = var.use_free_tier ? false : true
   apply_immediately          = true
 
   tags = { Name = "${local.prefix}-redis" }
@@ -475,12 +492,22 @@ resource "aws_ecs_task_definition" "backend" {
       { name = "JWT_EXPIRATION_HOURS", value = tostring(var.jwt_expiration_hours) },
       { name = "DATABASE_URL",         value = local.db_url },
       { name = "REDIS_URL",            value = local.redis_url },
+      # Langfuse LLM Observability
+      { name = "LANGFUSE_PUBLIC_KEY",  value = var.langfuse_public_key },
+      { name = "LANGFUSE_HOST",        value = var.langfuse_host },
+      # LangSmith LLM Observability (alternative)
+      { name = "LANGCHAIN_TRACING_V2", value = var.langsmith_api_key != "" ? "true" : "false" },
+      { name = "LANGCHAIN_PROJECT",    value = var.langsmith_project },
     ]
 
     secrets = [
-      { name = "OPENAI_API_KEY",   valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:OPENAI_API_KEY::" },
-      { name = "PINECONE_API_KEY", valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:PINECONE_API_KEY::" },
-      { name = "JWT_SECRET",       valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:JWT_SECRET::" },
+      { name = "OPENAI_API_KEY",      valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:OPENAI_API_KEY::" },
+      { name = "PINECONE_API_KEY",    valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:PINECONE_API_KEY::" },
+      { name = "JWT_SECRET",          valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:JWT_SECRET::" },
+      { name = "MCP_ENCRYPTION_KEY",  valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:MCP_ENCRYPTION_KEY::" },
+      { name = "LANGFUSE_SECRET_KEY", valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:LANGFUSE_SECRET_KEY::" },
+      { name = "LANGCHAIN_API_KEY",   valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:LANGSMITH_API_KEY::" },
+      { name = "SENTRY_DSN",          valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:SENTRY_DSN::" },
     ]
 
     healthCheck = {
@@ -654,7 +681,7 @@ resource "aws_ecs_service" "backend" {
   name                               = "${local.prefix}-backend"
   cluster                            = aws_ecs_cluster.main.id
   task_definition                    = aws_ecs_task_definition.backend.arn
-  desired_count                      = var.backend_desired_count
+  desired_count                      = var.initial_deployment ? 0 : var.backend_desired_count
   launch_type                        = "FARGATE"
   health_check_grace_period_seconds  = 60
   enable_execute_command             = true
@@ -686,7 +713,7 @@ resource "aws_ecs_service" "frontend" {
   name            = "${local.prefix}-frontend"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.frontend.arn
-  desired_count   = var.frontend_desired_count
+  desired_count   = var.initial_deployment ? 0 : var.frontend_desired_count
   launch_type     = "FARGATE"
 
   network_configuration {
@@ -1059,6 +1086,223 @@ resource "aws_iam_role_policy" "grafana_cloudwatch" {
           "ce:GetCostAndUsage"
         ]
         Resource = "*"
+      }
+    ]
+  })
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROUTE 53 — See route53.tf for DNS configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADDITIONAL CLOUDWATCH ALARMS — Memory utilization
+# ═══════════════════════════════════════════════════════════════════════════════
+
+resource "aws_cloudwatch_metric_alarm" "backend_memory_high" {
+  alarm_name          = "${local.prefix}-backend-memory-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "MemoryUtilization"
+  namespace           = "AWS/ECS"
+  period              = 120
+  statistic           = "Average"
+  threshold           = 85
+  alarm_description   = "Backend memory above 85%"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.backend.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "frontend_cpu_high" {
+  alarm_name          = "${local.prefix}-frontend-cpu-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  period              = 120
+  statistic           = "Average"
+  threshold           = 80
+  alarm_description   = "Frontend CPU above 80%"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.frontend.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
+  alarm_name          = "${local.prefix}-rds-connections-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "DatabaseConnections"
+  namespace           = "AWS/RDS"
+  period              = 120
+  statistic           = "Average"
+  threshold           = 80
+  alarm_description   = "RDS connections above 80"
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.main.identifier
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
+  alarm_name          = "${local.prefix}-rds-storage-low"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "FreeStorageSpace"
+  namespace           = "AWS/RDS"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 5368709120  # 5 GB in bytes
+  alarm_description   = "RDS free storage below 5 GB"
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.main.identifier
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FRONTEND AUTO-SCALING — Scale based on CPU utilization
+# ═══════════════════════════════════════════════════════════════════════════════
+
+resource "aws_appautoscaling_target" "frontend" {
+  max_capacity       = 5
+  min_capacity       = var.frontend_desired_count
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.frontend.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "frontend_cpu" {
+  name               = "${local.prefix}-frontend-cpu-scaling"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.frontend.resource_id
+  scalable_dimension = aws_appautoscaling_target.frontend.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.frontend.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = 70.0
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLOUDWATCH DASHBOARD — Unified view of all metrics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+resource "aws_cloudwatch_dashboard" "main" {
+  dashboard_name = "${local.prefix}-dashboard"
+
+  dashboard_body = jsonencode({
+    widgets = [
+      {
+        type   = "metric"
+        x      = 0
+        y      = 0
+        width  = 12
+        height = 6
+        properties = {
+          title  = "ECS CPU Utilization"
+          region = var.aws_region
+          metrics = [
+            ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.backend.name],
+            ["...", aws_ecs_service.frontend.name]
+          ]
+          period = 300
+          stat   = "Average"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 0
+        width  = 12
+        height = 6
+        properties = {
+          title  = "ECS Memory Utilization"
+          region = var.aws_region
+          metrics = [
+            ["AWS/ECS", "MemoryUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.backend.name],
+            ["...", aws_ecs_service.frontend.name]
+          ]
+          period = 300
+          stat   = "Average"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
+          title  = "ALB Request Count"
+          region = var.aws_region
+          metrics = [
+            ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", aws_lb.main.arn_suffix]
+          ]
+          period = 60
+          stat   = "Sum"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
+          title  = "ALB Target Response Time"
+          region = var.aws_region
+          metrics = [
+            ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", aws_lb.main.arn_suffix]
+          ]
+          period = 60
+          stat   = "Average"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          title  = "RDS CPU & Connections"
+          region = var.aws_region
+          metrics = [
+            ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", aws_db_instance.main.identifier],
+            [".", "DatabaseConnections", ".", "."]
+          ]
+          period = 300
+          stat   = "Average"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Redis Cache Hits/Misses"
+          region = var.aws_region
+          metrics = [
+            ["AWS/ElastiCache", "CacheHits", "ReplicationGroupId", aws_elasticache_replication_group.main.id],
+            [".", "CacheMisses", ".", "."]
+          ]
+          period = 300
+          stat   = "Sum"
+        }
       }
     ]
   })

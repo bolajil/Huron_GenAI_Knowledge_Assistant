@@ -50,6 +50,18 @@ variable "jwt_expiration_hours" {
 
 # ── RDS ───────────────────────────────────────────────────────────────────────
 
+variable "use_free_tier" {
+  description = "Use AWS Free Tier compatible settings (overrides RDS/ElastiCache to minimal specs)"
+  type        = bool
+  default     = false
+}
+
+variable "initial_deployment" {
+  description = "Set to true for first deployment (ECS services start with 0 tasks until images are pushed)"
+  type        = bool
+  default     = false
+}
+
 variable "db_username" {
   description = "RDS master username"
   type        = string
@@ -69,7 +81,7 @@ variable "db_name" {
 }
 
 variable "db_instance_class" {
-  description = "RDS instance class"
+  description = "RDS instance class (ignored if use_free_tier=true)"
   type        = string
   default     = "db.t3.medium"
 }
@@ -82,6 +94,30 @@ variable "db_allocated_storage" {
 
 variable "db_multi_az" {
   description = "Enable Multi-AZ for high availability"
+  type        = bool
+  default     = true
+}
+
+variable "db_backup_retention_period" {
+  description = "Days to retain backups (ignored if use_free_tier=true)"
+  type        = number
+  default     = 7
+}
+
+variable "db_deletion_protection" {
+  description = "Enable deletion protection (ignored if use_free_tier=true)"
+  type        = bool
+  default     = true
+}
+
+variable "db_skip_final_snapshot" {
+  description = "Skip final snapshot on delete (ignored if use_free_tier=true)"
+  type        = bool
+  default     = false
+}
+
+variable "db_storage_encrypted" {
+  description = "Enable storage encryption (ignored if use_free_tier=true)"
   type        = bool
   default     = true
 }
@@ -195,6 +231,80 @@ variable "posthog_key" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+# ── LLM Observability (Langfuse / LangSmith) ─────────────────────────────────
+
+variable "langfuse_public_key" {
+  description = "Langfuse public key for LLM tracing (leave blank to disable)"
+  type        = string
+  default     = ""
+}
+
+variable "langfuse_secret_key" {
+  description = "Langfuse secret key for LLM tracing"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "langfuse_host" {
+  description = "Langfuse host URL (default: cloud.langfuse.com)"
+  type        = string
+  default     = "https://cloud.langfuse.com"
+}
+
+variable "langsmith_api_key" {
+  description = "LangSmith API key for LLM tracing (alternative to Langfuse)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "langsmith_project" {
+  description = "LangSmith project name"
+  type        = string
+  default     = "huron-genai"
+}
+
+# ── Route 53 (optional) ───────────────────────────────────────────────────────
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID (leave blank to skip DNS records)"
+  type        = string
+  default     = ""
+}
+
+# ── CI/CD Pipeline ────────────────────────────────────────────────────────────
+
+variable "enable_cicd" {
+  description = "Enable CI/CD pipeline with CodePipeline and CodeBuild"
+  type        = bool
+  default     = false
+}
+
+variable "github_repo" {
+  description = "GitHub repository in format 'owner/repo'"
+  type        = string
+  default     = ""
+}
+
+variable "github_branch" {
+  description = "GitHub branch to deploy from"
+  type        = string
+  default     = "main"
+}
+
+variable "github_connection_arn" {
+  description = "AWS CodeStar Connection ARN for GitHub (create in AWS Console)"
+  type        = string
+  default     = ""
+}
+
+variable "enable_blue_green" {
+  description = "Enable Blue/Green deployments with CodeDeploy (requires ALB)"
+  type        = bool
+  default     = false
 }
 
 # ── Grafana ───────────────────────────────────────────────────────────────────

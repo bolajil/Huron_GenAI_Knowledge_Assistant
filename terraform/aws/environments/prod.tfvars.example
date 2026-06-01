@@ -1,0 +1,58 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Huron GenAI — PRODUCTION Environment Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Copy to prod.tfvars and fill in your values
+# Usage: terraform apply -var-file=environments/prod.tfvars
+
+# ── Environment ───────────────────────────────────────────────────────────────
+environment  = "prod"
+project_name = "huron"
+aws_region   = "us-east-1"
+
+# ── Free Tier (DISABLED for production) ───────────────────────────────────────
+use_free_tier = false
+
+# ── Scaling (production capacity) ─────────────────────────────────────────────
+backend_desired_count  = 3
+frontend_desired_count = 2
+backend_cpu            = 1024
+backend_memory         = 2048
+frontend_cpu           = 512
+frontend_memory        = 1024
+
+# ── Database (production settings) ────────────────────────────────────────────
+db_username                = "huron_prod_admin"
+db_password                = "VeryStrongProdPassword789!"  # Use Secrets Manager!
+db_name                    = "huron_prod"
+db_allocated_storage       = 100
+db_instance_class          = "db.t3.medium"
+db_multi_az                = true
+db_backup_retention_period = 7
+db_deletion_protection     = true
+db_skip_final_snapshot     = false
+db_storage_encrypted       = true
+
+# ── API Keys (REQUIRED — use Secrets Manager) ─────────────────────────────────
+openai_api_key   = "sk-..."
+pinecone_api_key = "..."
+pinecone_index   = "huron-prod"
+jwt_secret       = "production-jwt-secret-32-chars-min"
+mcp_encryption_key = "production-mcp-key-32-chars-min"
+
+# ── Domain (REQUIRED for production) ──────────────────────────────────────────
+domain_name     = "huron.example.com"
+certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/..."
+route53_zone_id = "Z1234567890ABC"
+
+# ── CI/CD ─────────────────────────────────────────────────────────────────────
+enable_cicd              = true
+github_repo              = "your-org/huron-genai"
+github_branch            = "main"
+enable_blue_green        = true  # Blue/Green for zero-downtime production deploys
+
+# ── Observability (REQUIRED for production) ───────────────────────────────────
+langfuse_public_key = "pk-lf-..."
+langfuse_secret_key = "sk-lf-..."
+langsmith_api_key   = "lsv2_..."
+sentry_dsn          = "https://...@sentry.io/..."
+posthog_key         = "phc_..."
