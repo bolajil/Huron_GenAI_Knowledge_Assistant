@@ -5,6 +5,110 @@ from a fresh machine all the way to production. Follow steps in exact order.
 
 ***
 
+## AWS Account Requirements by Environment
+
+> **Important:** The current dev and staging environments run on a personal AWS
+> free-tier account with restrictions. When moving to the real Huron AWS account,
+> the configuration below must be used. Free-tier accounts cannot support backup
+> retention, storage encryption, Multi-AZ, or larger instance types.
+
+### Personal / Free Tier Account (current dev & staging)
+
+| Setting | Value | Reason |
+|---------|-------|--------|
+| RDS instance | `db.t3.micro` | Only free-tier allowed instance |
+| Backup retention | `0` | Free tier blocks any retention > 0 |
+| Storage encrypted | `false` | Free tier restriction |
+| Multi-AZ | `false` | Free tier restriction |
+| ECS CPU/Memory | 256/512 | Minimal to stay within free tier |
+| ElastiCache | Basic single node | Free tier |
+| SSL/HTTPS | Not configured | No custom domain |
+
+### Huron Enterprise Account (required for real staging & production)
+
+When Huron provides the AWS account, update `staging.tfvars` and `prod.tfvars`
+with these production-grade values:
+
+| Setting | Staging | Production | Reason |
+|---------|---------|-----------|--------|
+| RDS instance | `db.t3.small` | `db.t3.medium` or larger | Handles real query load |
+| Backup retention | `7` days | `30` days | Point-in-time recovery |
+| Storage encrypted | `true` | `true` | HIPAA/compliance requirement |
+| Multi-AZ | `false` | `true` | Zero-downtime failover for prod |
+| Deletion protection | `false` | `true` | Prevents accidental data loss |
+| ECS Backend CPU/Mem | `512/1024` | `1024/2048` | Production workload capacity |
+| ECS Frontend CPU/Mem | `256/512` | `512/1024` | Production workload capacity |
+| ElastiCache | `cache.t3.micro` | `cache.t3.small` | Session management at scale |
+| SSL/HTTPS | Required | Required | `certificate_arn` from ACM |
+| Custom domain | `staging.huron.ai` | `app.huron.ai` | Set in `route53.tf` |
+| Blue/Green deploy | `false` | `true` | Zero-downtime prod deployments |
+
+### Changes to make in tfvars when switching to Huron account
+
+**`staging.tfvars` — update these lines:**
+```hcl
+aws_region   = "<HURON_AWS_REGION>"    # confirm region with Huron IT
+
+use_free_tier = false                   # already false, no change needed
+
+backend_cpu            = 512
+backend_memory         = 1024
+frontend_cpu           = 256
+frontend_memory        = 512
+
+db_instance_class          = "db.t3.small"
+db_backup_retention_period = 7          # was 0 on free tier
+db_storage_encrypted       = true       # was false on free tier
+db_multi_az                = false      # keep false for staging
+
+openai_api_key     = "<HURON_OPENAI_KEY>"     # replace personal key
+pinecone_api_key   = "<HURON_PINECONE_KEY>"   # replace personal key
+pinecone_index     = "huron-staging"
+
+certificate_arn = "<ACM_CERT_ARN>"      # get from Huron IT
+```
+
+**`prod.tfvars` — update these lines:**
+```hcl
+aws_region   = "<HURON_AWS_REGION>"
+
+use_free_tier = false
+
+backend_cpu            = 1024
+backend_memory         = 2048
+frontend_cpu           = 512
+frontend_memory        = 1024
+
+db_instance_class          = "db.t3.medium"
+db_backup_retention_period = 30
+db_storage_encrypted       = true
+db_multi_az                = true
+db_deletion_protection     = true
+
+openai_api_key     = "<HURON_OPENAI_KEY>"
+pinecone_api_key   = "<HURON_PINECONE_KEY>"
+pinecone_index     = "huron-enterprise-knowledge"
+
+certificate_arn   = "<ACM_CERT_ARN>"
+enable_blue_green = true              # enables CodeDeploy Blue/Green
+
+github_repo = "HuronOrg/Huron_GenAI_Knowledge_Assistant"
+```
+
+### Information to request from Huron IT before switching accounts
+
+- [ ] Huron AWS Account ID and preferred region
+- [ ] IAM user or role for Terraform (needs broad permissions for first apply)
+- [ ] ACM SSL certificate ARN for the application domain
+- [ ] Approved domain names (staging + production)
+- [ ] Huron OpenAI API key (enterprise tier)
+- [ ] Huron Pinecone API key and index name
+- [ ] VPC CIDR range preferences (default: `10.0.0.0/16`)
+- [ ] Confirmation of required AWS services (RDS, ECS, ElastiCache, WAF)
+- [ ] Any compliance requirements (HIPAA, SOC2) that affect encryption config
+
+---
+
 ## The 3-Stage Pipeline
 
 ```
@@ -12,7 +116,7 @@ LOCAL (test here first)
     │
     │  git push origin develop
     ▼
-DEV  (AWS — free tier, automated deploy after CI passes)
+DEV  (AWS — free tier OK for personal account / full config for Huron account)
     │
     │  git push origin staging
     ▼
