@@ -57,6 +57,12 @@
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+  :root {
+    --button-ripple-color: rgba(0, 0, 0, 0.12);
+  }
+  .dark {
+    --button-ripple-color: rgba(255, 255, 255, 0.25);
+  }
 }
 
 /* ─── Cross-browser autofill reset ─────────────────────────────────────────
