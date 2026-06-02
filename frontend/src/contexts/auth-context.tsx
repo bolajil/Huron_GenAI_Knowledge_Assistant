@@ -28,6 +28,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   sessionExpiresAt: Date | null;
   login: (token: string, user: User) => void;
+  loginWithToken: (token: string) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
   hasRole: (roles: string[]) => boolean;
@@ -183,6 +184,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     startRevalidation();
   };
 
+  // Used by SSO flow — receives token from redirect, fetches user profile
+  const loginWithToken = async (token: string): Promise<void> => {
+    localStorage.setItem("auth_token", token);
+    const response = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) throw new Error("Failed to fetch user profile");
+    const userData = (await response.json()) as User;
+    localStorage.setItem("user", JSON.stringify(userData));
+    setUser(userData);
+    scheduleAutoLogout(token);
+    startRevalidation();
+  };
+
   const hasPermission = (permission: string): boolean => {
     if (!user) return false;
     if (user.role === "root") return true;
@@ -205,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         sessionExpiresAt,
         login,
+        loginWithToken,
         logout,
         hasPermission,
         hasRole,
