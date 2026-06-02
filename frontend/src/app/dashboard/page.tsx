@@ -95,10 +95,10 @@ export default function DashboardPage() {
     /* ── page shell — subtle mesh gradient background in light, dark stays as-is ── */
     <div className="min-h-full space-y-8 relative">
 
-      {/* Light-mode background gradient — invisible in dark */}
+      {/* Light-mode background — soft blue-gray tint so white cards stand out */}
       <div className="pointer-events-none fixed inset-0 -z-10 dark:hidden"
         style={{
-          background: "radial-gradient(ellipse 80% 50% at 20% 0%, rgba(99,102,241,0.07) 0%, transparent 60%), radial-gradient(ellipse 60% 40% at 80% 100%, rgba(6,182,212,0.07) 0%, transparent 60%), #f8faff"
+          background: "radial-gradient(ellipse 90% 60% at 15% -10%, rgba(99,102,241,0.12) 0%, transparent 55%), radial-gradient(ellipse 70% 50% at 85% 110%, rgba(6,182,212,0.10) 0%, transparent 55%), #eef0f7"
         }}
       />
 
@@ -134,10 +134,9 @@ export default function DashboardPage() {
             key={cfg.key}
             className="
               relative overflow-hidden rounded-2xl p-5
-              backdrop-blur-sm
-              bg-white/70 border border-white/80 shadow-sm
+              bg-white border border-slate-200 shadow-md
               dark:bg-white/5 dark:border-white/10 dark:shadow-none
-              hover:shadow-md hover:-translate-y-0.5
+              hover:shadow-lg hover:-translate-y-0.5
               transition-all duration-300
             "
           >
@@ -171,7 +170,7 @@ export default function DashboardPage() {
         <div className="flex flex-wrap gap-3">
           <div className="
             flex items-center gap-3 px-4 py-3 rounded-2xl
-            backdrop-blur-sm bg-white/70 border border-white/80 shadow-sm
+            bg-white border border-slate-200 shadow-sm
             dark:bg-white/5 dark:border-white/10
           ">
             <div className="p-2 rounded-lg bg-violet-500/10">
@@ -188,7 +187,7 @@ export default function DashboardPage() {
           {isRoot() && (
             <div className="
               flex items-center gap-3 px-4 py-3 rounded-2xl
-              backdrop-blur-sm bg-white/70 border border-white/80 shadow-sm
+              bg-white border border-slate-200 shadow-sm
               dark:bg-white/5 dark:border-white/10
             ">
               <div className="p-2 rounded-lg bg-cyan-500/10">
@@ -209,8 +208,8 @@ export default function DashboardPage() {
         {/* Recent Queries */}
         <div className="
           lg:col-span-2 rounded-2xl overflow-hidden
-          backdrop-blur-sm bg-white/70 border border-white/80 shadow-sm
-          dark:bg-white/5 dark:border-white/10
+          bg-white border border-slate-200 shadow-md
+          dark:bg-white/5 dark:border-white/10 dark:shadow-none
         ">
           <div className="px-6 py-4 border-b border-black/5 dark:border-white/10 flex items-center justify-between">
             <h2 className="font-semibold text-sm">Recent Queries</h2>
@@ -272,8 +271,8 @@ export default function DashboardPage() {
         {/* Quick Actions */}
         <div className="
           rounded-2xl overflow-hidden
-          backdrop-blur-sm bg-white/70 border border-white/80 shadow-sm
-          dark:bg-white/5 dark:border-white/10
+          bg-white border border-slate-200 shadow-md
+          dark:bg-white/5 dark:border-white/10 dark:shadow-none
         ">
           <div className="px-6 py-4 border-b border-black/5 dark:border-white/10">
             <h2 className="font-semibold text-sm">Quick Actions</h2>
@@ -284,14 +283,14 @@ export default function DashboardPage() {
               onClick={() => router.push("/dashboard/query")}
               className="
                 w-full p-4 rounded-xl text-left group transition-all duration-200
-                bg-gradient-to-br from-violet-50 to-cyan-50 border border-violet-100
-                hover:from-violet-100 hover:to-cyan-100 hover:border-violet-200 hover:shadow-sm
-                dark:from-violet-500/10 dark:to-cyan-500/10 dark:border-violet-500/20
-                dark:hover:from-violet-500/20 dark:hover:to-cyan-500/20
+                bg-violet-50 border border-violet-200
+                hover:bg-violet-100 hover:border-violet-300 hover:shadow-sm
+                dark:bg-violet-500/10 dark:border-violet-500/20
+                dark:hover:bg-violet-500/20
               "
             >
               <div className="flex items-center gap-2 mb-1.5">
-                <div className="p-1.5 rounded-lg bg-violet-500/10">
+                <div className="p-1.5 rounded-lg bg-violet-100 dark:bg-violet-500/20">
                   <MessageSquare className="w-4 h-4 text-violet-600 dark:text-violet-400" />
                 </div>
                 <p className="font-semibold text-sm">Ask a Question</p>
@@ -306,14 +305,14 @@ export default function DashboardPage() {
               onClick={() => router.push("/dashboard/ingest")}
               className="
                 w-full p-4 rounded-xl text-left group transition-all duration-200
-                bg-gradient-to-br from-cyan-50 to-blue-50 border border-cyan-100
-                hover:from-cyan-100 hover:to-blue-100 hover:border-cyan-200 hover:shadow-sm
-                dark:from-cyan-500/10 dark:to-blue-500/10 dark:border-cyan-500/20
-                dark:hover:from-cyan-500/20 dark:hover:to-blue-500/20
+                bg-cyan-50 border border-cyan-200
+                hover:bg-cyan-100 hover:border-cyan-300 hover:shadow-sm
+                dark:bg-cyan-500/10 dark:border-cyan-500/20
+                dark:hover:bg-cyan-500/20
               "
             >
               <div className="flex items-center gap-2 mb-1.5">
-                <div className="p-1.5 rounded-lg bg-cyan-500/10">
+                <div className="p-1.5 rounded-lg bg-cyan-100 dark:bg-cyan-500/20">
                   <FileText className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
                 </div>
                 <p className="font-semibold text-sm">Upload Document</p>
@@ -328,14 +327,14 @@ export default function DashboardPage() {
               onClick={() => router.push("/dashboard/agent")}
               className="
                 w-full p-4 rounded-xl text-left group transition-all duration-200
-                bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100
-                hover:from-emerald-100 hover:to-teal-100 hover:border-emerald-200 hover:shadow-sm
-                dark:from-emerald-500/10 dark:to-teal-500/10 dark:border-emerald-500/20
-                dark:hover:from-emerald-500/20 dark:hover:to-teal-500/20
+                bg-emerald-50 border border-emerald-200
+                hover:bg-emerald-100 hover:border-emerald-300 hover:shadow-sm
+                dark:bg-emerald-500/10 dark:border-emerald-500/20
+                dark:hover:bg-emerald-500/20
               "
             >
               <div className="flex items-center gap-2 mb-1.5">
-                <div className="p-1.5 rounded-lg bg-emerald-500/10">
+                <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-500/20">
                   <Zap className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                 </div>
                 <p className="font-semibold text-sm">Agent Assistant</p>
