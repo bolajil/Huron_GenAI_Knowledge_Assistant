@@ -5,12 +5,13 @@ import { useRouter } from "next/navigation";
 import {
   FileText,
   MessageSquare,
-  TrendingUp,
   Users,
   Clock,
   ArrowUpRight,
   Building2,
   RefreshCw,
+  Zap,
+  TrendingUp,
 } from "lucide-react";
 import { useAuth } from "../../contexts/auth-context";
 import { api } from "../../services/api";
@@ -29,14 +30,33 @@ function timeAgo(timestamp: string): string {
   return `${Math.floor(diff / 3600)}h ago`;
 }
 
+const STAT_CONFIG = [
+  { key: "total_documents", name: "Total Documents", icon: FileText,  accent: "from-blue-500 to-cyan-400",  iconBg: "bg-blue-500/10 dark:bg-blue-500/20",  iconColor: "text-blue-500" },
+  { key: "queries_today",   name: "Queries Today",   icon: MessageSquare, accent: "from-emerald-500 to-teal-400", iconBg: "bg-emerald-500/10 dark:bg-emerald-500/20", iconColor: "text-emerald-500" },
+  { key: "active_users",    name: "Active Users",    icon: Users,    accent: "from-violet-500 to-purple-400", iconBg: "bg-violet-500/10 dark:bg-violet-500/20",  iconColor: "text-violet-500" },
+  { key: "avg_response",    name: "Avg Response",    icon: Clock,    accent: "from-orange-500 to-amber-400",  iconBg: "bg-orange-500/10 dark:bg-orange-500/20",  iconColor: "text-orange-500" },
+] as const;
+
+const DEPT_BADGE: Record<string, string> = {
+  hr:         "bg-blue-100   text-blue-700   dark:bg-blue-500/20   dark:text-blue-300",
+  legal:      "bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300",
+  finance:    "bg-green-100  text-green-700  dark:bg-green-500/20  dark:text-green-300",
+  clinical:   "bg-red-100    text-red-700    dark:bg-red-500/20    dark:text-red-300",
+  operations: "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
+  it:         "bg-cyan-100   text-cyan-700   dark:bg-cyan-500/20   dark:text-cyan-300",
+  marketing:  "bg-pink-100   text-pink-700   dark:bg-pink-500/20   dark:text-pink-300",
+  external:   "bg-slate-100  text-slate-700  dark:bg-slate-500/20  dark:text-slate-300",
+  general:    "bg-slate-100  text-slate-600  dark:bg-slate-500/20  dark:text-slate-300",
+};
+
 export default function DashboardPage() {
   const { user, isRoot } = useAuth();
   const router = useRouter();
   const firstName = user?.full_name?.split(" ")[0] || "User";
 
-  const [stats, setStats] = useState<StatsResponse | null>(null);
-  const [queries, setQueries] = useState<RecentQuery[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [stats, setStats]               = useState<StatsResponse | null>(null);
+  const [queries, setQueries]           = useState<RecentQuery[]>([]);
+  const [loading, setLoading]           = useState(true);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -45,14 +65,11 @@ export default function DashboardPage() {
         api.getStats(),
         api.getRecentQueries(8),
       ]);
-      if (statsData.status === "fulfilled") setStats(statsData.value);
+      if (statsData.status   === "fulfilled") setStats(statsData.value);
       if (queriesData.status === "fulfilled") setQueries(queriesData.value.queries ?? []);
       setLastRefreshed(new Date());
-    } catch {
-      // keep stale data
-    } finally {
-      setLoading(false);
-    }
+    } catch { /* keep stale data */ }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -61,59 +78,48 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, [fetchData]);
 
-  const statCards = stats
+  const statValues = stats
     ? [
-        {
-          name: "Total Documents",
-          value: stats.total_documents.toLocaleString(),
-          icon: FileText,
-          color: "text-blue-500",
-          bg: "bg-blue-500/10",
-        },
-        {
-          name: "Queries Today",
-          value: stats.queries_today.toLocaleString(),
-          icon: MessageSquare,
-          color: "text-green-500",
-          bg: "bg-green-500/10",
-        },
-        {
-          name: "Active Users",
-          value: stats.active_users.toLocaleString(),
-          icon: Users,
-          color: "text-purple-500",
-          bg: "bg-purple-500/10",
-        },
-        {
-          name: "Avg Response",
-          value: formatResponseTime(stats.avg_response_time),
-          icon: Clock,
-          color: "text-orange-500",
-          bg: "bg-orange-500/10",
-        },
+        stats.total_documents.toLocaleString(),
+        stats.queries_today.toLocaleString(),
+        stats.active_users.toLocaleString(),
+        formatResponseTime(stats.avg_response_time),
       ]
-    : [];
+    : ["—", "—", "—", "—"];
+
+  const visibleQueries = queries.filter(
+    (q) => isRoot() || q.department === user?.department
+  );
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
+    /* ── page shell — subtle mesh gradient background in light, dark stays as-is ── */
+    <div className="min-h-full space-y-8 relative">
+
+      {/* Light-mode background gradient — invisible in dark */}
+      <div className="pointer-events-none fixed inset-0 -z-10 dark:hidden"
+        style={{
+          background: "radial-gradient(ellipse 80% 50% at 20% 0%, rgba(99,102,241,0.07) 0%, transparent 60%), radial-gradient(ellipse 60% 40% at 80% 100%, rgba(6,182,212,0.07) 0%, transparent 60%), #f8faff"
+        }}
+      />
+
+      {/* ── Header ── */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground mt-1">
-            Welcome back, {firstName}!{" "}
+          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-slate-800 via-violet-700 to-cyan-600 bg-clip-text text-transparent dark:from-white dark:via-cyan-300 dark:to-blue-400">
+            Dashboard
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Welcome back, <span className="font-medium text-foreground">{firstName}</span>!{" "}
             {isRoot()
               ? "Global overview — all departments."
               : `${user?.department?.toUpperCase()} department overview.`}
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
-          {lastRefreshed && (
-            <span>Updated {timeAgo(lastRefreshed.toISOString())}</span>
-          )}
+          {lastRefreshed && <span>Updated {timeAgo(lastRefreshed.toISOString())}</span>}
           <button
             onClick={fetchData}
-            className="p-1.5 rounded hover:bg-accent transition-colors"
+            className="p-1.5 rounded-lg hover:bg-white/60 dark:hover:bg-white/10 border border-transparent hover:border-border transition-all"
             title="Refresh"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -121,97 +127,129 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Stats Grid */}
-      {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div
-              key={i}
-              className="p-6 rounded-xl border border-border bg-card animate-pulse h-32"
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {statCards.map((stat) => (
-            <div
-              key={stat.name}
-              className="p-6 rounded-xl border border-border bg-card hover:shadow-lg transition-shadow"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className={`p-2 rounded-lg ${stat.bg}`}>
-                  <stat.icon className={`w-5 h-5 ${stat.color}`} />
-                </div>
-                <TrendingUp className="w-4 h-4 text-green-500" />
-              </div>
-              <h3 className="text-muted-foreground text-sm">{stat.name}</h3>
-              <p className="text-2xl font-bold mt-1">{stat.value}</p>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* ── Stat Cards ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {STAT_CONFIG.map((cfg, i) => (
+          <div
+            key={cfg.key}
+            className="
+              relative overflow-hidden rounded-2xl p-5
+              backdrop-blur-sm
+              bg-white/70 border border-white/80 shadow-sm
+              dark:bg-white/5 dark:border-white/10 dark:shadow-none
+              hover:shadow-md hover:-translate-y-0.5
+              transition-all duration-300
+            "
+          >
+            {/* Accent gradient strip at top */}
+            <div className={`absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r ${cfg.accent}`} />
 
-      {/* Additional stats row */}
+            <div className="flex items-center justify-between mb-3">
+              <div className={`p-2.5 rounded-xl ${cfg.iconBg}`}>
+                <cfg.icon className={`w-5 h-5 ${cfg.iconColor}`} />
+              </div>
+              <TrendingUp className="w-4 h-4 text-emerald-500 opacity-70" />
+            </div>
+
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              {cfg.name}
+            </p>
+
+            {loading ? (
+              <div className="h-8 w-24 mt-1 rounded-lg bg-muted/60 animate-pulse" />
+            ) : (
+              <p className="text-2xl font-bold mt-1 text-foreground">
+                {statValues[i]}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Secondary stats (total users + departments) ── */}
       {stats && (
-        <div className="grid grid-cols-2 gap-4 max-w-sm">
-          <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3">
-            <Users className="w-4 h-4 text-muted-foreground" />
+        <div className="flex flex-wrap gap-3">
+          <div className="
+            flex items-center gap-3 px-4 py-3 rounded-2xl
+            backdrop-blur-sm bg-white/70 border border-white/80 shadow-sm
+            dark:bg-white/5 dark:border-white/10
+          ">
+            <div className="p-2 rounded-lg bg-violet-500/10">
+              <Users className="w-4 h-4 text-violet-500" />
+            </div>
             <div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground uppercase tracking-wide">
                 {isRoot() ? "Total Users" : "Dept Users"}
               </p>
-              <p className="font-semibold">{stats.total_users}</p>
+              <p className="font-bold text-lg leading-none">{stats.total_users}</p>
             </div>
           </div>
+
           {isRoot() && (
-            <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3">
-              <Building2 className="w-4 h-4 text-muted-foreground" />
+            <div className="
+              flex items-center gap-3 px-4 py-3 rounded-2xl
+              backdrop-blur-sm bg-white/70 border border-white/80 shadow-sm
+              dark:bg-white/5 dark:border-white/10
+            ">
+              <div className="p-2 rounded-lg bg-cyan-500/10">
+                <Building2 className="w-4 h-4 text-cyan-500" />
+              </div>
               <div>
-                <p className="text-xs text-muted-foreground">Departments</p>
-                <p className="font-semibold">{stats.departments}</p>
+                <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Departments</p>
+                <p className="font-bold text-lg leading-none">{stats.departments}</p>
               </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* ── Main content grid ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
         {/* Recent Queries */}
-        <div className="lg:col-span-2 rounded-xl border border-border bg-card">
-          <div className="p-6 border-b border-border">
-            <h2 className="font-semibold">Recent Queries</h2>
+        <div className="
+          lg:col-span-2 rounded-2xl overflow-hidden
+          backdrop-blur-sm bg-white/70 border border-white/80 shadow-sm
+          dark:bg-white/5 dark:border-white/10
+        ">
+          <div className="px-6 py-4 border-b border-black/5 dark:border-white/10 flex items-center justify-between">
+            <h2 className="font-semibold text-sm">Recent Queries</h2>
+            <span className="text-xs text-muted-foreground px-2 py-0.5 rounded-full bg-muted/60">
+              Live
+            </span>
           </div>
+
           {loading ? (
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-3">
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-12 rounded bg-accent/30 animate-pulse" />
+                <div key={i} className="h-14 rounded-xl bg-muted/40 animate-pulse" />
               ))}
             </div>
-          ) : queries.length === 0 ? (
-            <p className="p-6 text-sm text-muted-foreground">No queries yet.</p>
+          ) : visibleQueries.length === 0 ? (
+            <div className="p-10 text-center text-muted-foreground text-sm">
+              <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              No queries yet
+            </div>
           ) : (
-            <div className="divide-y divide-border">
-              {queries
-                .filter((q) => isRoot() || q.department === user?.department)
-                .map((q) => (
-                <div key={q.id} className="p-4 hover:bg-accent/50 transition-colors">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0 pr-4">
-                      <p className="font-medium text-sm truncate">{q.query_text}</p>
-                      <div className="flex items-center gap-3 mt-2">
-                        <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary capitalize">
+            <div className="divide-y divide-black/5 dark:divide-white/5">
+              {visibleQueries.map((q) => (
+                <div key={q.id}
+                  className="px-6 py-3.5 hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition-colors group"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
+                        {q.query_text}
+                      </p>
+                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium capitalize ${DEPT_BADGE[q.department] ?? DEPT_BADGE.general}`}>
                           {q.department}
                         </span>
-                        <span className="text-xs text-muted-foreground">
-                          {q.username}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {timeAgo(q.timestamp)}
-                        </span>
+                        <span className="text-[11px] text-muted-foreground">{q.username}</span>
+                        <span className="text-[11px] text-muted-foreground">{timeAgo(q.timestamp)}</span>
                       </div>
                     </div>
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    <span className="text-[11px] text-muted-foreground whitespace-nowrap tabular-nums mt-0.5">
                       {formatResponseTime(q.response_time_ms)}
                     </span>
                   </div>
@@ -219,45 +257,96 @@ export default function DashboardPage() {
               ))}
             </div>
           )}
-          <div className="p-4 border-t border-border">
+
+          <div className="px-6 py-3 border-t border-black/5 dark:border-white/10">
             <button
               onClick={() => router.push("/dashboard/analytics")}
-              className="text-sm text-primary hover:underline flex items-center"
+              className="text-sm text-primary hover:text-primary/80 flex items-center gap-1 transition-colors"
             >
               View all queries
-              <ArrowUpRight className="w-4 h-4 ml-1" />
+              <ArrowUpRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
 
         {/* Quick Actions */}
-        <div className="rounded-xl border border-border bg-card">
-          <div className="p-6 border-b border-border">
-            <h2 className="font-semibold">Quick Actions</h2>
+        <div className="
+          rounded-2xl overflow-hidden
+          backdrop-blur-sm bg-white/70 border border-white/80 shadow-sm
+          dark:bg-white/5 dark:border-white/10
+        ">
+          <div className="px-6 py-4 border-b border-black/5 dark:border-white/10">
+            <h2 className="font-semibold text-sm">Quick Actions</h2>
           </div>
           <div className="p-4 space-y-3">
+            {/* Ask a Question */}
             <button
               onClick={() => router.push("/dashboard/query")}
-              className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors text-left"
+              className="
+                w-full p-4 rounded-xl text-left group transition-all duration-200
+                bg-gradient-to-br from-violet-50 to-cyan-50 border border-violet-100
+                hover:from-violet-100 hover:to-cyan-100 hover:border-violet-200 hover:shadow-sm
+                dark:from-violet-500/10 dark:to-cyan-500/10 dark:border-violet-500/20
+                dark:hover:from-violet-500/20 dark:hover:to-cyan-500/20
+              "
             >
-              <MessageSquare className="w-5 h-5 text-primary mb-2" />
-              <p className="font-medium text-sm">Ask a Question</p>
-              <p className="text-xs text-muted-foreground mt-1">
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="p-1.5 rounded-lg bg-violet-500/10">
+                  <MessageSquare className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                </div>
+                <p className="font-semibold text-sm">Ask a Question</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
                 Get instant answers from your knowledge base
               </p>
             </button>
+
+            {/* Upload Document */}
             <button
               onClick={() => router.push("/dashboard/ingest")}
-              className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors text-left"
+              className="
+                w-full p-4 rounded-xl text-left group transition-all duration-200
+                bg-gradient-to-br from-cyan-50 to-blue-50 border border-cyan-100
+                hover:from-cyan-100 hover:to-blue-100 hover:border-cyan-200 hover:shadow-sm
+                dark:from-cyan-500/10 dark:to-blue-500/10 dark:border-cyan-500/20
+                dark:hover:from-cyan-500/20 dark:hover:to-blue-500/20
+              "
             >
-              <FileText className="w-5 h-5 text-primary mb-2" />
-              <p className="font-medium text-sm">Upload Document</p>
-              <p className="text-xs text-muted-foreground mt-1">
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="p-1.5 rounded-lg bg-cyan-500/10">
+                  <FileText className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                </div>
+                <p className="font-semibold text-sm">Upload Document</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
                 Add new documents to your department
+              </p>
+            </button>
+
+            {/* Agent Assistant */}
+            <button
+              onClick={() => router.push("/dashboard/agent")}
+              className="
+                w-full p-4 rounded-xl text-left group transition-all duration-200
+                bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100
+                hover:from-emerald-100 hover:to-teal-100 hover:border-emerald-200 hover:shadow-sm
+                dark:from-emerald-500/10 dark:to-teal-500/10 dark:border-emerald-500/20
+                dark:hover:from-emerald-500/20 dark:hover:to-teal-500/20
+              "
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="p-1.5 rounded-lg bg-emerald-500/10">
+                  <Zap className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <p className="font-semibold text-sm">Agent Assistant</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Run multi-step AI research tasks
               </p>
             </button>
           </div>
         </div>
+
       </div>
     </div>
   );
