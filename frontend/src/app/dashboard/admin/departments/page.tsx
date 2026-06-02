@@ -3,17 +3,7 @@
 import { useEffect, useState } from "react";
 import { Building2, Plus, Settings, Users, Loader2 } from "lucide-react";
 import { api } from "../../../../services/api";
-
-interface Department {
-  id: number;
-  code: string;
-  display_name: string;
-  namespace: string;
-  classification: string;
-  query_count: number;
-  user_count?: number;
-  document_count?: number;
-}
+import type { Department } from "../../../../services/api";
 
 export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);

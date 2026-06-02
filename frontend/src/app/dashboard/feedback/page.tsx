@@ -1,24 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ThumbsUp, ThumbsDown, MessageSquare, Star, BarChart3, Loader2, TrendingUp } from "lucide-react";
+import { ThumbsUp, MessageSquare, Star, BarChart3, Loader2, TrendingUp } from "lucide-react";
 import { api } from "../../../services/api";
-
-interface RecentQuery {
-  id: number;
-  query_text: string;
-  department: string;
-  created_at: string;
-  response_time_ms: number;
-  username?: string;
-}
-
-interface Stats {
-  queries_today: number;
-  total_queries?: number;
-  avg_response_time: number;
-  active_users: number;
-}
+import type { RecentQuery, StatsResponse as Stats } from "../../../services/api";
 
 export default function FeedbackAnalyticsPage() {
   const [queries, setQueries]   = useState<RecentQuery[]>([]);
@@ -173,7 +158,7 @@ export default function FeedbackAnalyticsPage() {
                           </span>
                         )}
                         <span className="text-xs text-muted-foreground ml-auto">
-                          {timeAgo(q.created_at)}
+                          {timeAgo(q.timestamp)}
                         </span>
                       </div>
                     </div>

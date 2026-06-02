@@ -135,7 +135,9 @@ export interface Department {
   display_name: string;
   namespace: string;
   classification?: string;
+  query_count?: number;
   user_count?: number;
+  document_count?: number;
 }
 
 export interface CreateUserPayload {
