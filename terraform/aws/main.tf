@@ -1014,8 +1014,9 @@ resource "aws_iam_role" "grafana" {
 # Then add to GitHub: Settings → Secrets → AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 
 resource "aws_iam_user" "cicd" {
-  name = "${local.prefix}-cicd-user"
-  tags = { Environment = var.environment }
+  name          = "${local.prefix}-cicd-user"
+  force_destroy = true
+  tags          = { Environment = var.environment }
 }
 
 resource "aws_iam_user_policy" "cicd" {
