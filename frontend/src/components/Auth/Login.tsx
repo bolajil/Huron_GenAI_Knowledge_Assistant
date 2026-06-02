@@ -54,7 +54,8 @@ export function Login() {
   };
 
   const handleSSOLogin = (provider: "azure" | "okta") => {
-    window.location.href = `/api/v1/auth/sso/${provider}`;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004";
+    window.location.href = `${apiBase}/api/v1/auth/oidc/login?provider=${provider}`;
   };
 
   return (

@@ -2456,44 +2456,67 @@ async def delete_document(dept: str, doc_id: str, token: str = Depends(oauth2_sc
 # HEALTH + INDEXES
 # ═════════════════════════════════════════════════════════════════════════════
 
-# ─── OIDC / SSO skeleton ─────────────────────────────────────────────────────
-# Activated only when OIDC_CLIENT_ID is set.  All three vars must be present
-# for SSO to function; missing any one will return 501 Not Implemented.
+# ─── OIDC / SSO ──────────────────────────────────────────────────────────────
+# Azure AD vars (set OIDC_CLIENT_ID + OIDC_AUTHORITY + OIDC_CLIENT_SECRET)
 _OIDC_CLIENT_ID     = os.getenv("OIDC_CLIENT_ID", "")
 _OIDC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET", "")
-_OIDC_AUTHORITY     = os.getenv("OIDC_AUTHORITY", "")   # e.g. https://login.microsoftonline.com/<tenant>
-_OIDC_REDIRECT_URI  = os.getenv("OIDC_REDIRECT_URI", "http://localhost:3000/api/v1/auth/oidc/callback")
+_OIDC_AUTHORITY     = os.getenv("OIDC_AUTHORITY", "")   # https://login.microsoftonline.com/<tenant>
+_OIDC_REDIRECT_URI  = os.getenv("OIDC_REDIRECT_URI", "http://localhost:8004/api/v1/auth/oidc/callback")
+
+# Okta vars (set OKTA_CLIENT_ID + OKTA_AUTHORITY + OKTA_CLIENT_SECRET)
+_OKTA_CLIENT_ID     = os.getenv("OKTA_CLIENT_ID", "")
+_OKTA_CLIENT_SECRET = os.getenv("OKTA_CLIENT_SECRET", "")
+_OKTA_AUTHORITY     = os.getenv("OKTA_AUTHORITY", "")   # https://<domain>.okta.com
+
+def _get_oidc_config(provider: str) -> tuple[str, str, str]:
+    """Return (client_id, client_secret, authority) for the given provider."""
+    if provider == "okta":
+        return _OKTA_CLIENT_ID, _OKTA_CLIENT_SECRET, _OKTA_AUTHORITY
+    return _OIDC_CLIENT_ID, _OIDC_CLIENT_SECRET, _OIDC_AUTHORITY  # azure default
 
 @app.get("/api/v1/auth/oidc/login")
-async def oidc_login():
-    """Redirect browser to Microsoft Entra ID (or any OIDC provider) login page."""
-    if not (_OIDC_CLIENT_ID and _OIDC_AUTHORITY):
-        raise HTTPException(status_code=501, detail="SSO not configured on this server")
+async def oidc_login(provider: str = "azure"):
+    """Redirect browser to Azure AD or Okta login page based on provider param."""
     from urllib.parse import urlencode
+    from fastapi.responses import RedirectResponse
+
+    client_id, _, authority = _get_oidc_config(provider)
+    if not (client_id and authority):
+        raise HTTPException(
+            status_code=501,
+            detail=f"{provider.title()} SSO not configured on this server"
+        )
+
     params = {
-        "client_id":     _OIDC_CLIENT_ID,
+        "client_id":     client_id,
         "response_type": "code",
         "redirect_uri":  _OIDC_REDIRECT_URI,
         "scope":         "openid profile email",
-        "state":         secrets.token_urlsafe(16),
+        "state":         f"{provider}:{secrets.token_urlsafe(16)}",
     }
-    auth_url = f"{_OIDC_AUTHORITY}/oauth2/v2.0/authorize?{urlencode(params)}"
-    from fastapi.responses import RedirectResponse
+    auth_url = f"{authority}/oauth2/v2.0/authorize?{urlencode(params)}"
     return RedirectResponse(url=auth_url)
 
 
 @app.get("/api/v1/auth/oidc/callback")
 async def oidc_callback(code: str = "", error: str = "", state: str = ""):
     """Exchange OIDC auth code for tokens, map AD groups → Huron role, issue JWT."""
-    if not (_OIDC_CLIENT_ID and _OIDC_CLIENT_SECRET and _OIDC_AUTHORITY):
-        raise HTTPException(status_code=501, detail="SSO not configured on this server")
+    from fastapi.responses import RedirectResponse as _RR
+
+    # Extract provider from state param (format: "azure:randomstate" or "okta:randomstate")
+    provider = state.split(":")[0] if ":" in state else "azure"
+    client_id, client_secret, authority = _get_oidc_config(provider)
+
+    if not (client_id and client_secret and authority):
+        raise HTTPException(status_code=501, detail=f"{provider.title()} SSO not configured")
     if error:
-        raise HTTPException(status_code=400, detail=f"OIDC provider error: {error}")
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        return _RR(url=f"{frontend_url}/auth/sso-complete?error={error}")
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code")
 
     import httpx as _httpx
-    token_url = f"{_OIDC_AUTHORITY}/oauth2/v2.0/token"
+    token_url = f"{authority}/oauth2/v2.0/token"
     resp = _httpx.post(token_url, data={
         "grant_type":    "authorization_code",
         "client_id":     _OIDC_CLIENT_ID,
