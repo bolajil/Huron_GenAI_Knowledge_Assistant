@@ -85,12 +85,12 @@ export default function DepartmentsPage() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Queries</span>
-                    <span>{dept.query_count.toLocaleString()}</span>
+                    <span>{(dept.query_count ?? 0).toLocaleString()}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Classification</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${classificationColor[dept.classification] ?? "text-muted-foreground bg-muted"}`}>
-                      {dept.classification.replace("_", " ")}
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${classificationColor[dept.classification ?? ""] ?? "text-muted-foreground bg-muted"}`}>
+                      {(dept.classification ?? "unknown").replace("_", " ")}
                     </span>
                   </div>
                 </div>
