@@ -80,10 +80,33 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  migrate:
+    name: Run DB Migrations
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install psycopg2-binary bcrypt
+      - name: Run migrations
+        run: python -m migrations.runner
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+          APP_ENV: dev
+      - name: Seed dev data
+        run: python -m migrations.seed_dev
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+          APP_ENV: dev
+
   deploy:
     name: Deploy to ECS Dev
     runs-on: ubuntu-latest
-    needs: [build-backend, build-frontend]
+    needs: [migrate]
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
