@@ -47,7 +47,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.image }},${{ env.ECR_BACKEND }}:latest
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
   build-frontend:
     name: Build & Push — Frontend
@@ -78,7 +78,7 @@ jobs:
             NEXT_PUBLIC_API_URL=${{ env.ALB_URL }}
             BACKEND_URL=${{ env.ALB_URL }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
   migrate:
     name: Run DB Migrations
