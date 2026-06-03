@@ -45,25 +45,24 @@ NEW ROOT PASSWORD:            __________________  (change from HuronRoot2026!)
 
 Generate secure random secrets:
 ```bash
-# Generate JWT secrets (run 3 times for dev/staging/prod)
+# Generate a cryptographically secure JWT secret (run once each for dev, staging, prod)
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 
-# Generate MCP encryption keys
+# Generate a secure encryption key for MCP (run once each for dev, staging, prod)
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 
-# Generate DB passwords
+# Generate a strong database password with a recognisable prefix
 python -c "import secrets; print('Huron' + secrets.token_urlsafe(16) + '!')"
 ```
 
 ### Step 1.2 — Export the code from personal GitHub
 
 ```bash
-# On your current machine — clone a clean copy with all branches
+# Clone using --mirror so ALL branches, tags and history are included (not just main)
 git clone --mirror https://github.com/bolajil/Huron_GenAI_Knowledge_Assistant.git
-cd Huron_GenAI_Knowledge_Assistant.git
 
-# This creates a bare repo with ALL branches and history
-# You will push this to Huron's GitHub in Phase 3
+# Enter the mirror clone folder — this is a bare repo (no working files, just git data)
+cd Huron_GenAI_Knowledge_Assistant.git
 ```
 
 ### Step 1.3 — Update all references BEFORE pushing to Huron GitHub
@@ -103,10 +102,19 @@ REPO="HuronOrg/Huron_GenAI_Knowledge_Assistant"
 
 After making these changes:
 ```bash
+# Stage the files you just edited
 git add .github/workflows/ scripts/
+
+# Save the changes with a descriptive message
 git commit -m "chore: update references for Huron infrastructure migration"
+
+# Push develop — CI will run to validate the changes
 git push origin develop
+
+# Promote the same changes to main so both branches stay in sync
 git checkout main && git merge develop && git push origin main
+
+# Return to develop for normal work
 git checkout develop
 ```
 
@@ -119,55 +127,56 @@ git checkout develop
 Run these on the Huron workstation:
 
 ```powershell
-# 1. Git
+# Install Git — version control tool to clone and push code
 winget install Git.Git
 
-# 2. Node.js 20
+# Install Node.js 20 — required to run the Next.js frontend locally
 winget install OpenJS.NodeJS.LTS
 
-# 3. Python 3.11
+# Install Python 3.11 — required to run the FastAPI backend locally
 winget install Python.Python.3.11
 
-# 4. Docker Desktop
+# Install Docker Desktop — runs containers locally (database, backend, frontend)
 winget install Docker.DockerDesktop
-# Restart after install
+# ⚠️ Restart the machine after this before continuing
 
-# 5. AWS CLI
+# Install AWS CLI — lets you run AWS commands from the terminal
 winget install Amazon.AWSCLI
-# Verify:
+# Confirm it installed correctly:
 aws --version
 
-# 6. Terraform
+# Install Terraform — provisions all AWS infrastructure (VPC, ECS, RDS, etc.)
 winget install Hashicorp.Terraform
-# Verify:
+# Confirm it installed correctly:
 terraform -version
 
-# 7. GitHub CLI
+# Install GitHub CLI — lets you manage GitHub from the terminal (secrets, workflows)
 winget install GitHub.cli
-# Verify:
+# Confirm it installed correctly:
 gh --version
 ```
 
 ### Step 2.2 — Configure AWS CLI with Huron credentials
 
 ```bash
+# Saves Huron AWS credentials to ~/.aws/credentials so every aws command uses them
 aws configure
 # AWS Access Key ID:     <Huron AWS access key>
 # AWS Secret Access Key: <Huron AWS secret key>
 # Default region:        <Huron AWS region>
 # Default output format: json
 
-# Verify it works:
+# Test that credentials work — should print Huron's account ID, not personal one
 aws sts get-caller-identity
-# Should show Huron's account ID
 ```
 
 ### Step 2.3 — Authenticate GitHub CLI
 
 ```bash
+# Log the GitHub CLI into Huron's GitHub account so gh commands work
 gh auth login
-# Choose: GitHub.com
-# Choose: HTTPS
+# Choose: GitHub.com        ← use github.com, not enterprise
+# Choose: HTTPS             ← use HTTPS not SSH
 # Choose: Login with a web browser
 # Complete browser login with Huron GitHub account
 ```
@@ -179,7 +188,7 @@ gh auth login
 ### Step 3.1 — Create the repo in Huron's GitHub
 
 ```bash
-# Create the repo (replace HuronOrg with actual org/username)
+# Create a new private repo in Huron's GitHub org (replace HuronOrg with actual org/username)
 gh repo create HuronOrg/Huron_GenAI_Knowledge_Assistant \
   --private \
   --description "Huron GenAI Knowledge Assistant"
@@ -190,33 +199,34 @@ Or manually: GitHub → New Repository → Name: `Huron_GenAI_Knowledge_Assistan
 ### Step 3.2 — Push all branches and history
 
 ```bash
-# From the mirror clone you made in Step 1.2:
+# Go into the mirror clone folder created in Step 1.2
 cd Huron_GenAI_Knowledge_Assistant.git
 
+# Point the remote URL at Huron's new repo instead of the personal one
 git remote set-url origin https://github.com/HuronOrg/Huron_GenAI_Knowledge_Assistant.git
-git push --mirror
 
-# This transfers:
-# - All commits and history
-# - main branch
-# - develop branch
-# - staging branch (create if missing)
-# - All tags
+# Push everything — all branches, all history, all tags — to Huron's GitHub
+git push --mirror
 ```
 
 ### Step 3.3 — Verify branches exist
 
 ```bash
+# Open the repo in your browser — visually confirm all three branches exist
 gh repo view HuronOrg/Huron_GenAI_Knowledge_Assistant --web
-# Confirm main, develop, staging branches are all present
 ```
 
 ### Step 3.4 — Create staging branch if missing
 
 ```bash
+# Clone a normal working copy of the repo
 git clone https://github.com/HuronOrg/Huron_GenAI_Knowledge_Assistant.git
 cd Huron_GenAI_Knowledge_Assistant
+
+# Create the staging branch locally
 git checkout -b staging
+
+# Push it to GitHub so it exists as a remote branch
 git push origin staging
 ```
 
@@ -239,6 +249,105 @@ gh api repos/HuronOrg/Huron_GenAI_Knowledge_Assistant/branches/staging/protectio
   --field required_pull_request_reviews='{"required_approving_review_count":1}' \
   --field restrictions=null
 ```
+
+### Step 3.6 — Day-to-day git push workflow
+
+This is the standard process for pushing changes and triggering deployments.
+
+#### Pushing a feature (dev environment)
+```bash
+# Start from develop — always branch off the latest dev code
+git checkout develop
+
+# Create a new branch just for this feature (keeps develop clean while you work)
+git checkout -b feature/my-feature
+
+# Stage all changed files for commit
+git add .
+
+# Save the snapshot with a descriptive message ("feat:" = new feature)
+git commit -m "feat: describe your change"
+
+# Upload your branch to GitHub — this triggers CI (tests + lint + docker build)
+# Does NOT deploy anything yet — just validates the code is healthy
+git push origin feature/my-feature
+
+# Switch back to develop so you can merge your finished feature into it
+git checkout develop
+
+# Bring your feature's commits into develop
+git merge feature/my-feature
+
+# Push develop to GitHub — this triggers Deploy 1 — Dev (AWS)
+# Your changes will be live on the dev environment in ~5 minutes
+git push origin develop
+
+# Delete the feature branch locally — it's been merged, no longer needed
+git branch -d feature/my-feature
+
+# Delete the feature branch on GitHub — keeps the repo tidy
+git push origin --delete feature/my-feature
+```
+
+#### Promoting dev → staging
+```bash
+# Switch to the staging branch
+git checkout staging
+
+# Pull all the verified dev changes into staging
+git merge develop
+
+# Push staging to GitHub — triggers Deploy 2 — Staging (AWS) automatically
+# Use this when dev has been tested and is ready for stakeholder/QA review
+git push origin staging
+```
+
+#### Promoting staging → production
+```bash
+# Switch to the main branch (represents what is live in production)
+git checkout main
+
+# Pull all the staging-verified changes into main
+git merge staging
+
+# Push main to GitHub — triggers Deploy 3 — Production (AWS)
+# ⚠️  This goes LIVE to real users — only do this after staging sign-off
+# A manual approval gate will pause the workflow before deploying
+git push origin main
+```
+
+#### Keeping all branches in sync after a hotfix on main
+```bash
+# Start on main and apply your emergency fix there first
+git checkout main
+# ... make fix, git add ., git commit, git push origin main ...
+
+# Copy the fix down to staging so it doesn't get lost on next promotion
+git checkout staging && git merge main && git push origin staging
+
+# Copy the fix down to develop so future features are built on top of it
+git checkout develop && git merge main && git push origin develop
+
+# Return to main — back to normal development
+git checkout main
+```
+
+#### Check CI status before merging
+```bash
+# See the last 5 CI runs and whether they passed or failed
+gh run list --workflow=ci.yml --limit 5
+
+# Stream the live logs of the currently running CI job
+gh run watch
+```
+
+> **Branch → Environment mapping:**
+> | Branch | Environment | Workflow triggered |
+> |--------|-------------|-------------------|
+> | `feature/*`, `fix/*` | — (CI only) | CI |
+> | `develop` | Dev | Deploy 1 — Dev (AWS) |
+> | `staging` | Staging | Deploy 2 — Staging (AWS) |
+> | `main` | Production | Deploy 3 — Production (AWS) |
 
 ---
 
@@ -431,20 +540,21 @@ The workflow files currently have the personal AWS account ID `137738968757`.
 Update them to Huron's account ID:
 
 ```powershell
-# Find Huron's account ID first
+# Get Huron's AWS account ID — you'll use this to replace the personal one
 aws sts get-caller-identity --query Account --output text
-# Returns: <HURON_ACCOUNT_ID>
 
-# Replace in all workflow files (PowerShell)
+# Fill in Huron's values
 $huronAccountId = "<HURON_ACCOUNT_ID>"
 $region = "<HURON_REGION>"
 
+# List the 3 workflow files that contain hardcoded account IDs
 $files = @(
     ".github/workflows/deploy-dev.yml",
     ".github/workflows/deploy-staging.yml",
     ".github/workflows/deploy-prod.yml"
 )
 
+# Loop through each file and do a find-and-replace in one go
 foreach ($file in $files) {
     (Get-Content $file) `
         -replace "137738968757", $huronAccountId `
@@ -452,9 +562,16 @@ foreach ($file in $files) {
     Set-Content $file
 }
 
+# Stage the updated workflow files
 git add .github/workflows/
+
+# Commit the change
 git commit -m "chore: update AWS account ID and region to Huron infrastructure"
+
+# Push to develop — CI will run
 git push origin develop
+
+# Sync the same change to main and return to develop
 git checkout main; git merge develop; git push origin main; git checkout develop
 ```
 
@@ -467,10 +584,10 @@ git checkout main; git merge develop; git push origin main; git checkout develop
 Before running Terraform, confirm the AWS user has sufficient permissions:
 
 ```bash
-# Check current identity
+# Confirm you are logged in as Huron's AWS user (not personal)
 aws sts get-caller-identity
 
-# Quick permission test — if any return 'implicitDeny', you need more permissions
+# Simulate key actions — any 'implicitDeny' result means you need more permissions
 aws iam simulate-principal-policy \
   --policy-source-arn $(aws sts get-caller-identity --query Arn --output text) \
   --action-names ec2:DescribeVpcs ecs:CreateCluster ecr:CreateRepository \
@@ -491,17 +608,17 @@ account, scoped down to least-privilege after the initial deployment is verified
 If multiple people will run Terraform, use S3 to share state and prevent conflicts:
 
 ```bash
-# Create S3 bucket for state (one-time setup)
+# Create the S3 bucket that will store the terraform.tfstate file remotely
 aws s3api create-bucket \
   --bucket huron-terraform-state-<HURON_ACCOUNT_ID> \
   --region <HURON_REGION>
 
-# Enable versioning
+# Turn on versioning so you can recover a previous state if something goes wrong
 aws s3api put-bucket-versioning \
   --bucket huron-terraform-state-<HURON_ACCOUNT_ID> \
   --versioning-configuration Status=Enabled
 
-# Create DynamoDB table for state locking
+# Create a DynamoDB table used as a lock — prevents two people running terraform at the same time
 aws dynamodb create-table \
   --table-name huron-terraform-locks \
   --attribute-definitions AttributeName=LockID,AttributeType=S \
@@ -529,7 +646,11 @@ terraform {
 ### Step 6.2 — Start local Docker database
 
 ```powershell
-# Create the local postgres container for development
+# Start a local PostgreSQL database container for development use
+# -d         = run in background
+# --name     = give it a recognisable name
+# -e         = set environment variables (database name, user, password)
+# -p 5436    = expose on port 5436 locally (avoids clash with any system postgres on 5432)
 docker run -d `
   --name huron-postgres `
   -e POSTGRES_DB=huron `
@@ -538,27 +659,30 @@ docker run -d `
   -p 5436:5432 `
   postgres:16-alpine
 
-# Verify it runs
+# Confirm the container is running (should show 'Up' in status column)
 docker ps --filter "name=huron-postgres"
 ```
 
 ### Step 6.2 — Run Terraform to create AWS infrastructure
 
 ```bash
+# Enter the Terraform directory
 cd terraform/aws
+
+# Download all required Terraform providers (AWS, etc.) — only needed once
 terraform init
 
-# Deploy DEV first
-# IMPORTANT: First pass — ECS starts at 0 tasks (avoids CannotPullContainerError on first deploy)
+# Create all AWS infrastructure for dev (VPC, ECS, RDS, ECR, ALB, Secrets Manager…)
+# initial_deployment=true sets ECS desired_count=0 so tasks don't start before images exist
+# ⚠️  Takes 10-15 minutes — type 'yes' when prompted
 terraform apply -var-file environments/dev.tfvars -var="initial_deployment=true"
-# Type 'yes' when prompted — takes 10-15 minutes
 
-# Note the outputs — you will need them:
-terraform output alb_dns_name      # → DEV_ALB_URL
-terraform output ecr_backend_url   # → DEV_ECR_BACKEND
-terraform output ecr_frontend_url  # → DEV_ECR_FRONTEND
-terraform output ecs_cluster_name  # → DEV_ECS_CLUSTER
-terraform output -raw rds_endpoint  # → for DEV_DATABASE_URL secret (sensitive value)
+# Read the outputs — copy these values, you'll need them in the next steps
+terraform output alb_dns_name       # → paste as DEV_ALB_URL GitHub variable
+terraform output ecr_backend_url    # → paste as DEV_ECR_BACKEND GitHub variable
+terraform output ecr_frontend_url   # → paste as DEV_ECR_FRONTEND GitHub variable
+terraform output ecs_cluster_name   # → paste as DEV_ECS_CLUSTER GitHub variable
+terraform output -raw rds_endpoint  # → use in the DEV_DATABASE_URL secret (sensitive)
 ```
 
 ### Step 6.3b — Request ACM Certificate and get Route 53 Zone ID (staging/prod only)
@@ -566,33 +690,33 @@ terraform output -raw rds_endpoint  # → for DEV_DATABASE_URL secret (sensitive
 Required for HTTPS. Skip for dev if using HTTP only.
 
 ```bash
-# Request wildcard certificate
+# Request an SSL certificate for your domain (covers root + all subdomains with *)
 aws acm request-certificate \
   --domain-name "huron.example.com" \
   --subject-alternative-names "*.huron.example.com" \
   --validation-method DNS \
   --region <HURON_REGION>
-# Returns: CertificateArn — save this value
+# → Returns a CertificateArn — save this, you'll need it in staging/prod tfvars
 
-# Get DNS validation records (needed to prove domain ownership)
+# Get the CNAME records AWS needs you to add to DNS to prove you own the domain
 aws acm describe-certificate \
   --certificate-arn <CertificateArn> \
   --query "Certificate.DomainValidationOptions[*].{Domain:DomainName,Name:ResourceRecord.Name,Value:ResourceRecord.Value}" \
   --output table
+# → Add those CNAME records in your DNS registrar — cert status changes to 'Issued' in 5-30 min
 ```
 
 Add the returned CNAME records to your DNS registrar (or Route 53 hosted zone).
 Certificate status changes from **Pending** → **Issued** within 5–30 minutes.
 
 ```bash
-# Get your Route 53 hosted zone ID
+# List all Route 53 hosted zones — find the one matching your domain
 aws route53 list-hosted-zones \
   --query "HostedZones[*].{Name:Name,Id:Id}" \
   --output table
-
-# Copy the zone ID (format: /hostedzone/ZXXXXXXXXXXXXX — use just ZXXXXXXXXXXXXX)
-# Paste into staging.tfvars and prod.tfvars as route53_zone_id
-# Paste the certificate ARN as certificate_arn
+# → Copy the zone ID (strip the /hostedzone/ prefix, keep just ZXXXXXXXXXXXXX)
+# → Paste it as route53_zone_id in staging.tfvars and prod.tfvars
+# → Paste the certificate ARN as certificate_arn in both files
 ```
 
 ### Step 6.4 — Create AWS CodeStar Connection for GitHub (staging/prod only)
@@ -616,7 +740,8 @@ Required if `enable_cicd = true`. This cannot be automated — must be done manu
 ### Step 6.5 — Set GitHub Secrets
 
 ```powershell
-# Creates fresh IAM key and sets secrets in Huron GitHub repo
+# Runs the setup script which creates a new IAM access key and stores it
+# as AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the GitHub repo secrets
 .\scripts\setup-github-secrets.ps1 -Env dev
 ```
 
@@ -630,34 +755,38 @@ GitHub → Settings → Secrets → Actions → New secret:
 ### Step 6.4 — Set GitHub Variables
 
 ```powershell
-# Reads terraform outputs and sets variables in Huron GitHub repo
+# Reads the terraform outputs (ALB URL, ECR URLs, cluster name) and saves them
+# as GitHub Actions variables so the deploy workflow knows where to deploy to
 .\scripts\post-apply.ps1 -Env dev
 ```
 
 ### Step 6.5 — Bootstrap first Docker images
 
 ```bash
-# Authenticate to Huron's ECR
+# Log Docker into AWS ECR — gets a temporary password and passes it straight to docker login
 aws ecr get-login-password --region <HURON_REGION> | \
   docker login --username AWS --password-stdin \
   <HURON_ACCOUNT_ID>.dkr.ecr.<HURON_REGION>.amazonaws.com
 
-# Push backend
+# Build the backend Docker image using the production Dockerfile
 docker build -f Dockerfile.production \
   -t <HURON_ACCOUNT_ID>.dkr.ecr.<HURON_REGION>.amazonaws.com/huron-dev-backend:latest .
+
+# Upload (push) the backend image to ECR so ECS can pull it
 docker push <HURON_ACCOUNT_ID>.dkr.ecr.<HURON_REGION>.amazonaws.com/huron-dev-backend:latest
 
-# Push frontend
+# Build the frontend image — bake the ALB URL in so the browser knows where the API is
 docker build -f frontend/Dockerfile.production \
   --build-arg NEXT_PUBLIC_API_URL=http://<DEV_ALB_URL> \
   -t <HURON_ACCOUNT_ID>.dkr.ecr.<HURON_REGION>.amazonaws.com/huron-dev-frontend:latest \
   ./frontend
+
+# Upload the frontend image to ECR
 docker push <HURON_ACCOUNT_ID>.dkr.ecr.<HURON_REGION>.amazonaws.com/huron-dev-frontend:latest
 
-# Phase 2 — scale ECS up now that images exist in ECR
+# Now images exist in ECR — tell Terraform to scale ECS back up to normal task count
+# ⚠️  Type 'yes' — completes in ~30 seconds, ECS tasks become healthy within 2-3 minutes
 terraform apply -var-file environments/dev.tfvars -var="initial_deployment=false"
-# Type 'yes' — completes in ~30 seconds
-# ECS tasks will start pulling images and become healthy within 2-3 minutes
 ```
 
 ---
@@ -667,30 +796,27 @@ terraform apply -var-file environments/dev.tfvars -var="initial_deployment=false
 ### Step 7.1 — Trigger first automated deploy
 
 ```bash
+# Push to develop — this kicks off the full automated pipeline:
+# 1. CI runs (unit tests, TypeScript lint, integration tests, docker build smoke test)
+# 2. DB migrations run against the RDS database
+# 3. Docker images are built and pushed to Huron's ECR
+# 4. ECS services are updated with the new images
+# 5. Health check confirms the app is responding
 git push origin develop
-# GitHub Actions will:
-# 1. Run CI (tests + lint + integration + docker build)
-# 2. Run DB migrations
-# 3. Build + push images to Huron ECR
-# 4. Deploy to Huron ECS
-# 5. Health check
 ```
 
 ### Step 7.2 — Verify the deployment
 
 ```bash
-# Check backend health
+# Hit the health endpoint — confirms backend is running and connected to the database
 curl http://<DEV_ALB_URL>/health
+# Expected response: {"status":"healthy","db":{"status":"ok","backend":"postgresql"},...}
 
-# Expected:
-# {"status":"healthy","db":{"status":"ok","backend":"postgresql"},...}
-
-# Migrations run automatically on first container start via Alembic.
-# If health shows database errors, check the backend logs:
+# If health shows database errors, stream the last 10 minutes of backend container logs
 aws logs tail /ecs/huron-dev/backend --since 10m --region <HURON_REGION>
 
-# Open frontend in browser
-# http://<DEV_ALB_URL>
+# Open the frontend in a browser and log in
+# URL:   http://<DEV_ALB_URL>
 # Login: root / <NEW_ROOT_PASSWORD>
 ```
 
@@ -699,12 +825,13 @@ aws logs tail /ecs/huron-dev/backend --since 10m --region <HURON_REGION>
 Once logged in, immediately change the root password from the default.
 Or via the backend:
 ```bash
-# Connect to the RDS database directly
+# Open a direct SQL connection to the RDS database
 psql postgresql://huron_user:<password>@<db-endpoint>:5432/huron_dev
 
-# Update root password (use bcrypt hash)
+# Generate a bcrypt hash of your chosen new password (bcrypt is what the app expects)
 python -c "import bcrypt; print(bcrypt.hashpw(b'<NEW_PASSWORD>', bcrypt.gensalt()).decode())"
-# Then in psql:
+
+# Paste the hash into this SQL command and run it inside psql:
 UPDATE users SET password_hash='<hash>' WHERE username='root';
 ```
 
@@ -732,22 +859,25 @@ Once Huron infrastructure is verified working:
 
 ### Step 8.2 — Destroy personal AWS infrastructure
 ```bash
-# ONLY after confirming Huron's deployment is working
+# ⚠️  ONLY run this after Huron's deployment is fully verified and stable
 cd terraform/aws
 
-# Delete IAM key first to avoid destroy error
+# List IAM access keys for the CI user — you need the key ID to delete it first
 aws iam list-access-keys --user-name huron-dev-cicd-user
+
+# Delete the IAM key — Terraform destroy fails if active keys exist
 aws iam delete-access-key --user-name huron-dev-cicd-user --access-key-id <KEY_ID>
 
-# Destroy
+# Destroy all personal AWS infrastructure — this is irreversible
 terraform apply -destroy -var-file environments/dev.tfvars -auto-approve
 ```
 
 ### Step 8.3 — Remove personal credentials from Huron machine
 ```bash
-# Remove personal AWS profile if it was configured
+# Re-run aws configure for the personal profile and blank out all values
+# Or open ~/.aws/credentials in a text editor and delete the [personal] section
 aws configure --profile personal
-# Set all values to 'none' or delete ~/.aws/credentials entry
+# Set all values to 'none' to remove personal credentials from this machine
 ```
 
 ---
