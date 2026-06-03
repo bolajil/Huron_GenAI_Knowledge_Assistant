@@ -126,7 +126,7 @@ jobs:
           load: true
           tags: huron-backend:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
       - uses: docker/build-push-action@v6
         with:
           context: ./frontend
@@ -136,4 +136,4 @@ jobs:
           tags: huron-frontend:ci
           build-args: NEXT_PUBLIC_API_URL=http://localhost:8004
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true

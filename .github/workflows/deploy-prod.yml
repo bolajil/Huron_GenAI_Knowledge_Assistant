@@ -88,7 +88,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.image }},${{ env.ECR_BACKEND }}:prod-latest
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
       - name: Register new ECS task definition
         id: register
         run: |
@@ -145,7 +145,7 @@ jobs:
             NEXT_PUBLIC_API_URL=${{ env.PROD_URL }}
             BACKEND_URL=${{ env.PROD_URL }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
   # ── Blue/Green deploy via CodeDeploy ────────────────────────────────────────
   deploy:
