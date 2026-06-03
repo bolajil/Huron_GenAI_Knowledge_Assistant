@@ -240,6 +240,106 @@ gh api repos/HuronOrg/Huron_GenAI_Knowledge_Assistant/branches/staging/protectio
   --field restrictions=null
 ```
 
+### Step 3.6 — Day-to-day git push workflow
+
+This is the standard process for pushing changes and triggering deployments.
+
+#### Pushing a feature (dev environment)
+```bash
+# Start from develop — always branch off the latest dev code
+git checkout develop
+
+# Create a new branch just for this feature (keeps develop clean while you work)
+git checkout -b feature/my-feature
+
+# Stage all changed files for commit
+git add .
+
+# Save the snapshot with a descriptive message ("feat:" = new feature)
+git commit -m "feat: describe your change"
+
+# Upload your branch to GitHub — this triggers CI (tests + lint + docker build)
+# Does NOT deploy anything yet — just validates the code is healthy
+git push origin feature/my-feature
+
+# Switch back to develop so you can merge your finished feature into it
+git checkout develop
+
+# Bring your feature's commits into develop
+git merge feature/my-feature
+
+# Push develop to GitHub — this triggers Deploy 1 — Dev (AWS)
+# Your changes will be live on the dev environment in ~5 minutes
+git push origin develop
+
+# Delete the feature branch locally — it's been merged, no longer needed
+# (lowercase -d is safe: refuses to delete if branch hasn't been merged)
+git branch -d feature/my-feature
+
+# Delete the feature branch on GitHub — keeps the repo tidy
+git push origin --delete feature/my-feature
+```
+
+#### Promoting dev → staging
+```bash
+# Switch to the staging branch
+git checkout staging
+
+# Pull all the verified dev changes into staging
+git merge develop
+
+# Push staging to GitHub — triggers Deploy 2 — Staging (AWS) automatically
+# Use this when dev has been tested and is ready for stakeholder/QA review
+git push origin staging
+```
+
+#### Promoting staging → production
+```bash
+# Switch to the main branch (represents what is live in production)
+git checkout main
+
+# Pull all the staging-verified changes into main
+git merge staging
+
+# Push main to GitHub — triggers Deploy 3 — Production (AWS)
+# ⚠️  This goes LIVE to real users — only do this after staging sign-off
+# A manual approval gate will pause the workflow before deploying
+git push origin main
+```
+
+#### Keeping all branches in sync after a hotfix on main
+```bash
+# Start on main and apply your emergency fix there first
+git checkout main
+# ... make fix, git add ., git commit, git push origin main ...
+
+# Copy the fix down to staging so it doesn't get lost on next promotion
+git checkout staging && git merge main && git push origin staging
+
+# Copy the fix down to develop so future features are built on top of it
+git checkout develop && git merge main && git push origin develop
+
+# Return to main — back to normal development
+git checkout main
+```
+
+#### Check CI status before merging
+```bash
+# See the last 5 CI runs and whether they passed or failed
+gh run list --workflow=ci.yml --limit 5
+
+# Stream the live logs of the currently running CI job
+gh run watch
+```
+
+> **Branch → Environment mapping:**
+> | Branch | Environment | Workflow triggered |
+> |--------|-------------|-------------------|
+> | `feature/*`, `fix/*` | — (CI only) | CI |
+> | `develop` | Dev | Deploy 1 — Dev (AWS) |
+> | `staging` | Staging | Deploy 2 — Staging (AWS) |
+> | `main` | Production | Deploy 3 — Production (AWS) |
+
 ---
 
 ## Phase 4 — Create Environment Config Files
