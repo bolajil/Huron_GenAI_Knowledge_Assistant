@@ -40,7 +40,7 @@ jobs:
           SHA=$(echo ${{ github.sha }} | cut -c1-7)
           echo "image=${{ env.ECR_BACKEND }}:$SHA" >> $GITHUB_OUTPUT
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           context: .
           file: backend/Dockerfile.production
@@ -68,7 +68,7 @@ jobs:
           SHA=$(echo ${{ github.sha }} | cut -c1-7)
           echo "image=${{ env.ECR_FRONTEND }}:$SHA" >> $GITHUB_OUTPUT
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           context: ./frontend
           file: frontend/Dockerfile.production
