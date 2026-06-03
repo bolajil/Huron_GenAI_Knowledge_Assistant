@@ -5,15 +5,6 @@ const nextConfig = {
   // Required for `docker run node server.js` (Dockerfile.production Stage 3)
   output: 'standalone',
 
-  // TypeScript and ESLint are checked in dedicated CI jobs (tsc --noEmit, next lint).
-  // Disabling them here prevents duplicate failures during `next build` in Docker.
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-
   // API rewrites to FastAPI backend — BACKEND_URL overridden in containers
   async rewrites() {
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:8004';
