@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../../../contexts/auth-context";
 import { Loader2, AlertCircle } from "lucide-react";
 
-export default function SsoCompletePage() {
+function SsoCompleteInner() {
   const router       = useRouter();
   const params       = useSearchParams();
   const { loginWithToken } = useAuth();
@@ -56,5 +56,19 @@ export default function SsoCompletePage() {
         <p className="text-gray-400 text-sm mt-1">Please wait</p>
       </div>
     </div>
+  );
+}
+
+export default function SsoCompletePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-900">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
+        </div>
+      }
+    >
+      <SsoCompleteInner />
+    </Suspense>
   );
 }
