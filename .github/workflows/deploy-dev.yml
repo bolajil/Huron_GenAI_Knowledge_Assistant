@@ -1,4 +1,4 @@
-name: Deploy — Dev (AWS)
+name: Deploy 1 — Dev (AWS)
 
 on:
   workflow_run:

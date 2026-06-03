@@ -1,4 +1,4 @@
-name: Deploy — Staging (AWS)
+name: Deploy 2 — Staging (AWS)
 
 on:
   workflow_run:
