@@ -257,6 +257,7 @@ def _ensure_pg_feedback_table():
 def _seed_db():
     """Ensure root user and departments exist — works for both SQLite and PostgreSQL."""
     _DEPTS = [
+        ("company",   "Company-Wide",     "vaultmind-huron-company-general",     "internal"),
         ("hr",         "Human Resources",  "vaultmind-huron-hr-general",         "confidential"),
         ("legal",      "Legal",            "vaultmind-huron-legal-general",       "restricted"),
         ("finance",    "Finance",          "vaultmind-huron-finance-general",     "restricted"),
@@ -837,19 +838,19 @@ def log_query(uid: int, dept: str, text: str, ms: int, faith: float, srcs: int):
 ROLE_CLEARANCE = {"root": 5, "dept_admin": 4, "power_user": 3, "user": 2, "viewer": 1}
 
 ROLE_PERMISSIONS: dict[str, list[str]] = {
-    "root":       ["query","chat","ingest","research","agent","cross_dept_query","admin",
+    "root":       ["query","chat","ingest","company_ingest","research","agent","cross_dept_query","admin",
                    "manage_users","manage_departments","manage_all_depts","create_dept_admin",
                    "approve_requests","view_audit_log","mcp","analytics"],
-    "dept_admin": ["query","chat","ingest","research","agent","manage_users",
+    "dept_admin": ["query","chat","ingest","company_ingest","research","agent","manage_users",
                    "manage_dept_users","approve_requests","analytics","mcp"],
     "power_user": ["query","chat","ingest","research","agent","cross_dept_query","analytics"],
-    "user":       ["query","chat","ingest"],
+    "user":       ["query","chat"],
     "viewer":     ["query","chat"],
 }
 
 
 def _ns_scope(role: str, dept: str) -> list[str]:
-    return ["*"] if role == "root" else [dept]
+    return ["*"] if role == "root" else [dept, "company"]
 
 
 def create_token(user: dict) -> str:
@@ -2195,6 +2196,8 @@ async def ingest_endpoint(
         raise HTTPException(status_code=401, detail="Invalid token")
     perm(p, "ingest")
     dept = department or p.get("dept_id", "general")
+    if dept == "company":
+        perm(p, "company_ingest")
     dept_gate(p, dept)
 
     svc = get_svc()

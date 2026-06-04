@@ -824,13 +824,13 @@ Only proceed to Steps 8.1–8.3 after all verification checklist items are check
 
 Once Huron infrastructure is verified working:
 
-### Step 8.1 — Archive personal GitHub repo
+### Step 9.1 — Archive personal GitHub repo
 ```bash
 # In personal GitHub: Settings → Archive repository
 # Or: make it private if you want to keep it as a backup
 ```
 
-### Step 8.2 — Destroy personal AWS infrastructure
+### Step 9.2 — Destroy personal AWS infrastructure
 ```bash
 # ONLY after confirming Huron's deployment is working
 cd terraform/aws
@@ -843,7 +843,7 @@ aws iam delete-access-key --user-name huron-dev-cicd-user --access-key-id <KEY_I
 terraform apply -destroy -var-file environments/dev.tfvars -auto-approve
 ```
 
-### Step 8.3 — Remove personal credentials from Huron machine
+### Step 9.3 — Remove personal credentials from Huron machine
 ```bash
 # Remove personal AWS profile if it was configured
 aws configure --profile personal
@@ -922,3 +922,567 @@ Use this to track progress:
 | `.github/workflows/*.yml` | AWS account ID, region | Updated in Step 1.3 + Phase 5 |
 | `scripts/setup-github-secrets.*` | REPO reference | Updated in Step 1.3 |
 | `scripts/post-apply.*` | REPO reference | Updated in Step 1.3 |
+
+---
+
+## Phase 9 — Observability & Monitoring (Complete Before Production)
+
+All six steps below must be completed before the app goes live. Steps 1–3 activate tools
+whose code is already written but not yet configured. Steps 4–6 require code changes.
+Complete them in order — each layer builds on the previous one.
+
+| Step | Tool | What it covers | Status |
+|------|------|----------------|--------|
+| 9.1 | Sentry | Backend + frontend error tracking | Code ready, DSN missing |
+| 9.2 | Better Stack | External uptime monitoring + on-call alerts | Not configured |
+| 9.3 | CloudWatch SNS | Alert notifications for AWS infra alarms | Terraform gap |
+| 9.4 | Deep health check | DB + Pinecone connectivity, not just process alive | Shallow — needs code change |
+| 9.5 | Grafana | Unified dashboard for ECS / RDS / ALB metrics | IAM ready, workspace not created |
+| 9.6 | LangSmith | Full LLM chain tracing — every RAG call captured | Not implemented |
+
+---
+
+### Step 9.1 — Sentry (Error Tracking)
+
+The Sentry SDK is already integrated in both backend and frontend. The only thing missing
+is the DSN values in the environment files. Nothing needs to be installed or coded.
+
+**Why Sentry matters here:** The Huron query pipeline makes 4–5 external calls per request
+(embed → Pinecone → LLM → faithfulness check → DB write). Any of them can fail silently
+and the user just sees "No results." Without Sentry you are guessing which step broke.
+Sentry gives you the exact file, line number, and input values within 30 seconds of failure.
+
+#### 9.1.1 — Create Sentry account and two projects
+
+1. Go to **https://sentry.io** → sign up → create organisation `huron-consulting`.
+2. **Create Project → Python → FastAPI** → name it `huron-backend` → copy the DSN.
+3. **Create Project → JavaScript → Next.js** → name it `huron-frontend` → copy the DSN.
+4. **Settings → Auth Tokens → Create New Token** → scopes: `project:releases` + `org:read`
+   → copy the token (shown once only).
+
+#### 9.1.2 — Fill in `backend/.env`
+
+Open `backend/.env` and set:
+
+```
+SENTRY_DSN=https://abc123@o000000.ingest.sentry.io/0000000   # backend DSN from step above
+APP_ENV=staging                                               # use "staging" here; change to "production" only on prod deploy
+```
+
+The backend Sentry integration in `main.py` (lines 44–79) activates automatically as soon
+as `SENTRY_DSN` is non-empty. No code change needed. See Step 9.4 — the deep health check
+must also be in place before configuring Better Stack monitors in Step 9.2.
+
+#### 9.1.3 — Fill in `frontend/.env.local`
+
+```
+NEXT_PUBLIC_SENTRY_DSN=https://xyz789@o000000.ingest.sentry.io/1111111
+SENTRY_ORG=huron-consulting
+SENTRY_PROJECT=huron-frontend
+SENTRY_AUTH_TOKEN=sntrys_your_token_here
+```
+
+The frontend Sentry config files (`sentry.client.config.ts`, `sentry.server.config.ts`,
+`sentry.edge.config.ts`) and `next.config.js` wrapping are all already written. They
+activate automatically when `NEXT_PUBLIC_SENTRY_DSN` is set.
+
+#### 9.1.4 — Install the packages
+
+```bash
+# Backend
+pip install "sentry-sdk[fastapi]"
+
+# Frontend (from the frontend/ directory)
+npm install @sentry/nextjs
+```
+
+#### 9.1.5 — Verify
+
+```bash
+# Hit the staging backend ALB — replace with your actual staging URL
+curl -X POST https://<staging-alb-domain>/api/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "sentry-test"}'
+```
+
+Go to **sentry.io → huron-backend → Issues** and filter by environment `staging`.
+You should see the event within 30 seconds. Repeat for the frontend by opening the
+staging app URL and checking **huron-frontend → Issues**.
+
+---
+
+### Step 9.2 — Better Stack (Uptime Monitoring)
+
+No code changes required. All configuration is in the Better Stack dashboard.
+
+**Why Better Stack:** Sentry only fires when an error occurs inside the process. If the
+ECS task crashes completely, or the ALB becomes unreachable, Sentry never fires because the
+process is dead. Better Stack pings `/health` from external locations every 30 seconds —
+it catches the cases Sentry misses.
+
+#### 9.2.1 — Create account and monitors
+
+1. Go to **https://betterstack.com** → sign up → open **Uptime** section.
+2. **New monitor → HTTP**
+   - URL: `https://<staging-alb-domain>/health`  *(use staging URL first — add a second production monitor after prod deploy)*
+   - Name: `Huron Backend — Staging`
+   - Check frequency: `30 seconds`
+   - Expected status: `200`
+   - Regions: select **US East** + **EU West** (two regions prevent false alarms from
+     single-region network blips)
+   - Recovery confirmation: `2 consecutive successes` (prevents flapping incidents)
+3. **New monitor → HTTP**
+   - URL: `https://<staging-frontend-domain>`
+   - Name: `Huron Frontend — Staging`
+   - Expected status: `200`
+4. **New monitor → HTTP** *(optional but recommended)*
+   - URL: `https://api.pinecone.io`
+   - Expected status: `401` (Pinecone rejects unauthenticated pings with 401 — this means
+     Pinecone is alive and responding. A 5xx or timeout means Pinecone is having an outage
+     which would break every query silently.)
+   - Name: `Pinecone Reachability`
+
+#### 9.2.2 — Configure alerting
+
+1. Left sidebar → **On-call → Alert policies → New alert policy** → name: `Huron Staging`
+2. Add escalations:
+   - Immediately → **Email**
+   - After 5 minutes → **SMS** (add phone under Team → your profile)
+3. On each monitor → **Edit → Alert policy → Huron Staging**.
+
+> After production is deployed, duplicate this policy, rename it `Huron Production`,
+> and attach it to the production monitors.
+
+#### 9.2.3 — Add a status page
+
+1. Left sidebar → **Status pages → New status page** → name: `Huron System Status`
+2. Add all three monitors.
+3. Share the public URL with your team — users can check it themselves instead of messaging you.
+
+---
+
+### Step 9.3 — CloudWatch SNS (Infrastructure Alarm Notifications)
+
+The Terraform config in `terraform/aws/main.tf` already defines 6 CloudWatch alarms
+(backend CPU, backend memory, frontend CPU, RDS CPU, RDS connections, RDS storage). The gap
+is that **no SNS topic is wired to them** — alarms fire but notify nobody.
+
+#### 9.3.1 — Add SNS topic and subscription to Terraform
+
+Open `terraform/aws/main.tf` and add the following block before the CloudWatch alarms section:
+
+```hcl
+# ── SNS topic for CloudWatch alarm notifications ──────────────────────────────
+resource "aws_sns_topic" "alerts" {
+  name = "${local.prefix}-alerts"
+  tags = { Environment = var.environment }
+}
+
+resource "aws_sns_topic_subscription" "alerts_email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email          # add this variable to variables.tf
+}
+```
+
+#### 9.3.2 — Add the variable to `variables.tf`
+
+```hcl
+variable "alert_email" {
+  description = "Email address that receives CloudWatch alarm notifications"
+  type        = string
+}
+```
+
+#### 9.3.3 — Add the variable to each `environments/*.tfvars`
+
+```hcl
+alert_email = "ops@huron-vaultmind.ai"    # use the real ops email
+```
+
+#### 9.3.4 — Wire SNS to every existing alarm
+
+For each of the 6 `aws_cloudwatch_metric_alarm` blocks in `main.tf`, add:
+
+```hcl
+alarm_actions             = [aws_sns_topic.alerts.arn]
+ok_actions                = [aws_sns_topic.alerts.arn]
+insufficient_data_actions = [aws_sns_topic.alerts.arn]
+```
+
+Example for the backend CPU alarm (the same pattern applies to all 6):
+
+```hcl
+resource "aws_cloudwatch_metric_alarm" "backend_cpu_high" {
+  alarm_name          = "${local.prefix}-backend-cpu-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  period              = 120
+  statistic           = "Average"
+  threshold           = 85
+  alarm_description   = "Backend CPU above 85%"
+  alarm_actions             = [aws_sns_topic.alerts.arn]
+  ok_actions                = [aws_sns_topic.alerts.arn]
+  insufficient_data_actions = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.backend.name
+  }
+}
+```
+
+#### 9.3.5 — Apply and confirm subscription
+
+```bash
+# Apply to staging first — repeat for prod.tfvars after staging is verified
+terraform apply -var-file="environments/staging.tfvars"
+```
+
+AWS sends a confirmation email to the address in `alert_email`. **You must click the
+confirmation link in that email** or the SNS subscription stays in `PendingConfirmation`
+and no alerts are ever sent. Repeat `terraform apply -var-file="environments/prod.tfvars"`
+after staging passes all checklist items.
+
+---
+
+### Step 9.4 — Deep Health Check
+
+The current `/health` endpoint returns `{"status":"healthy"}` whether or not the database
+or Pinecone are reachable. A process can be alive while being completely unable to serve
+requests. This change makes the health check actually verify the critical dependencies.
+
+**Why this matters for Better Stack and the ALB:** The ALB uses `/health` to decide whether
+to route traffic to an ECS task. If the task is up but the DB connection is broken, the ALB
+currently keeps sending traffic to it. After this change, a broken DB causes `/health` to
+return 503, the ALB removes the task from rotation, and ECS replaces it automatically.
+
+#### 9.4.1 — Replace `backend/routes/health.py`
+
+Replace the current contents of `backend/routes/health.py` with:
+
+```python
+"""
+Deep health check — verifies process, database, and Pinecone connectivity.
+Returns 200 only when all critical dependencies are reachable.
+Returns 503 with a degraded payload when any dependency is down.
+"""
+import os
+import time
+from fastapi import APIRouter
+
+router = APIRouter(tags=["health"])
+
+
+@router.get("/health")
+async def health_check():
+    checks  = {}
+    healthy = True
+
+    # ── Database ──────────────────────────────────────────────────────────────
+    try:
+        from core.database import db_conn
+        t0 = time.time()
+        with db_conn() as conn:
+            conn.execute("SELECT 1").fetchone()
+        checks["database"] = {"status": "ok", "latency_ms": round((time.time() - t0) * 1000)}
+    except Exception as exc:
+        checks["database"] = {"status": "error", "detail": str(exc)}
+        healthy = False
+
+    # ── Pinecone ──────────────────────────────────────────────────────────────
+    try:
+        from pinecone import Pinecone
+        t0  = time.time()
+        pc  = Pinecone(api_key=os.getenv("PINECONE_API_KEY", ""))
+        pc.list_indexes()
+        checks["pinecone"] = {"status": "ok", "latency_ms": round((time.time() - t0) * 1000)}
+    except Exception as exc:
+        checks["pinecone"] = {"status": "error", "detail": str(exc)}
+        healthy = False
+
+    status_code = 200 if healthy else 503
+    payload = {
+        "status":  "healthy" if healthy else "degraded",
+        "service": "huron-genai-backend",
+        "version": "4.0.0",
+        "checks":  checks,
+    }
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(content=payload, status_code=status_code)
+```
+
+#### 9.4.2 — Verify locally
+
+```bash
+# Test locally first to confirm the code change is correct
+curl -s http://localhost:8004/health | python -m json.tool
+```
+
+Then verify on staging after deploying:
+
+```bash
+curl -s https://<staging-alb-domain>/health | python -m json.tool
+```
+
+Expected output when healthy:
+```json
+{
+  "status": "healthy",
+  "service": "huron-genai-backend",
+  "version": "4.0.0",
+  "checks": {
+    "database": {"status": "ok", "latency_ms": 2},
+    "pinecone":  {"status": "ok", "latency_ms": 45}
+  }
+}
+```
+
+If the database is unreachable, the response code will be `503` and Better Stack will
+trigger an alert within 60 seconds. **Do not deploy to production until this returns
+200 on staging with both checks `ok`.**
+
+---
+
+### Step 9.5 — Amazon Managed Grafana (Unified Dashboard)
+
+The Terraform IAM role for Grafana already exists (`aws_iam_role.grafana` in `main.tf`).
+The `aws_grafana_workspace` resource is commented out because it requires manual enablement
+in the AWS Console first.
+
+**Why Grafana:** CloudWatch alarms tell you when a threshold is crossed. Grafana shows you
+the full picture — ECS CPU over the last 7 days, RAG query volume per department, RDS
+connection pool trends. It is where you go to understand capacity and plan scaling.
+
+#### 9.5.1 — Enable Amazon Managed Grafana in AWS Console
+
+1. AWS Console → **Amazon Grafana** → **Get started**.
+2. Select **IAM Identity Center** as the authentication method (compatible with AD).
+3. Note the workspace ARN shown after creation — you need it for Step 9.5.2.
+
+#### 9.5.2 — Uncomment the Terraform resource
+
+In `terraform/aws/main.tf`, find the commented-out block and replace it with:
+
+```hcl
+resource "aws_grafana_workspace" "main" {
+  name                     = "${local.prefix}-grafana"
+  account_access_type      = "CURRENT_ACCOUNT"
+  authentication_providers = ["AWS_SSO"]
+  permission_type          = "SERVICE_MANAGED"
+  role_arn                 = aws_iam_role.grafana.arn
+
+  data_sources = [
+    "CLOUDWATCH",
+    "XRAY",
+  ]
+
+  tags = { Environment = var.environment }
+}
+
+output "grafana_endpoint" {
+  value = aws_grafana_workspace.main.endpoint
+}
+```
+
+```bash
+# Apply to staging first
+terraform apply -var-file="environments/staging.tfvars"
+```
+
+#### 9.5.3 — Add dashboards
+
+After the workspace is created, import these two standard dashboards from the Grafana
+dashboard library using their IDs:
+
+| Dashboard | ID | What it shows |
+|-----------|-----|---------------|
+| AWS ECS | `550` | ECS CPU, memory, task count |
+| AWS RDS | `707` | RDS connections, CPU, storage, IOPS |
+
+In the Grafana workspace: **Dashboards → Import → enter ID → Load → select CloudWatch
+as the data source → Import**.
+
+---
+
+### Step 9.6 — LangSmith (Full LLM Chain Tracing)
+
+LangSmith captures every step of the RAG pipeline as a linked trace: embed call →
+Pinecone query → retrieved chunks → LLM prompt sent → LLM response received →
+faithfulness score. This is the only tool that answers "why did this query give a bad
+answer?" with full visibility into what the model actually saw.
+
+**What gets traced in this project:**
+- Every `rag.query()` call → embed latency, Pinecone hit count, top scores per department
+- Every `openai.chat.completions.create()` call → model used, token count (prompt +
+  completion), latency, full prompt text
+- Every `_source_guard()` call → faithfulness score, whether it passed
+- Every fallback to `_llm_direct()` — so you know when RAG is bypassed
+
+#### 9.6.1 — Create LangSmith account and project
+
+1. Go to **https://smith.langchain.com** → sign up.
+2. Create two projects: `huron-genai-staging` and `huron-genai-production`.
+3. **Settings → API Keys → Create API Key** → copy the key (one key covers both projects).
+
+#### 9.6.2 — Add environment variables to `backend/.env`
+
+```
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_API_KEY=ls__your_key_here
+LANGCHAIN_PROJECT=huron-genai-staging    # change to huron-genai-production on prod deploy
+```
+
+Setting `LANGCHAIN_TRACING_V2=true` activates the LangSmith SDK's auto-patching of
+OpenAI calls. **Every `openai.chat.completions.create()` call in the entire backend is
+automatically captured** — no code change needed for the LLM calls that already exist.
+
+#### 9.6.3 — Install the package
+
+```bash
+pip install langsmith openai
+```
+
+#### 9.6.4 — Wrap the RAG query entry point for full trace linking
+
+The auto-patching captures individual LLM calls but does not group them into a single
+trace per user request. Add the `@traceable` decorator to the query and chat endpoints
+so that the embed call, Pinecone query, and LLM call are all shown as one linked trace
+in LangSmith.
+
+Add this to `backend/main.py` in the imports section at the top:
+
+```python
+# LangSmith tracing — no-op when LANGCHAIN_TRACING_V2 is not set
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):      # noqa: E306
+        def _wrap(fn):
+            return fn
+        return _wrap
+```
+
+Then wrap the two internal helper functions that do the actual RAG work.
+Find `_source_guard` in `main.py` and add the decorator above it:
+
+```python
+@traceable(name="source_guard", run_type="chain")
+async def _source_guard(query: str, response: str,
+                        sources: list, faithfulness_score):
+```
+
+And wrap `_llm_direct`:
+
+```python
+@traceable(name="llm_direct_fallback", run_type="llm")
+async def _llm_direct(messages: list[dict], dept: str, top_k: int = 5) -> dict:
+```
+
+#### 9.6.5 — Add metadata tags to traces
+
+LangSmith lets you filter traces by department, user, and model. Add this helper call
+inside the `query_endpoint` function in `main.py`, right before `rag.query()` is called:
+
+```python
+# Attach LangSmith metadata so traces are filterable by dept and user
+try:
+    from langsmith import get_current_run_tree
+    run = get_current_run_tree()
+    if run:
+        run.add_metadata({
+            "dept":     dept,
+            "username": p.get("sub"),
+            "role":     p.get("role"),
+        })
+except Exception:
+    pass
+```
+
+#### 9.6.6 — Verify traces are appearing
+
+```bash
+# Send a test query against staging (must be authenticated)
+curl -X POST https://<staging-alb-domain>/api/v1/query \
+  -H "Authorization: Bearer <your-staging-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is the onboarding policy?"}'
+```
+
+Go to **https://smith.langchain.com → huron-genai-staging → Traces**.
+
+Within 10 seconds you should see a trace entry. Click it to confirm it shows:
+- The embedding call with latency
+- The Pinecone query with number of matches and top score
+- The LLM call with prompt tokens, completion tokens, model name, and latency
+- The faithfulness score from `_source_guard`
+- The department and username as metadata tags
+
+#### 9.6.7 — What to monitor in LangSmith day-to-day
+
+| Metric | Where to find it | What to act on |
+|--------|-----------------|----------------|
+| P95 LLM latency | Traces → filter by run type `llm` | If >5s, check OpenAI tier limits |
+| Prompt token count | Traces → expand LLM run | If >3000 tokens, chunk retrieval is pulling too many chunks |
+| Faithfulness score distribution | Traces → filter by `source_guard` | If avg <0.7, documents need re-ingestion or chunking tuned |
+| `llm_direct_fallback` frequency | Traces → filter by name | If >5% of queries hit fallback, Pinecone namespace has no documents |
+| Error rate by dept | Traces → group by metadata `dept` | Identify which departments have broken retrieval |
+
+---
+
+### Phase 9 — Pre-Production Checklist (Staging)
+
+Complete all items on staging before promoting to production.
+After staging passes, re-run the `terraform apply` and env var steps targeting production.
+
+#### Sentry
+- [ ] `SENTRY_DSN` set in `backend/.env`
+- [ ] `NEXT_PUBLIC_SENTRY_DSN` set in `frontend/.env.local`
+- [ ] `SENTRY_AUTH_TOKEN` set in `frontend/.env.local`
+- [ ] `APP_ENV=staging` set in staging `backend/.env` (changes to `production` on prod deploy)
+- [ ] `sentry-sdk[fastapi]` in `backend/requirements.txt`
+- [ ] `@sentry/nextjs` in `frontend/package.json`
+- [ ] Test event visible in Sentry dashboard
+
+#### Better Stack
+- [ ] Backend `/health` monitor created and showing green
+- [ ] Frontend monitor created and showing green
+- [ ] Pinecone reachability monitor created
+- [ ] Alert policy created with email + SMS escalation
+- [ ] Status page created and shared with team
+
+#### CloudWatch SNS
+- [ ] `aws_sns_topic.alerts` resource added to `main.tf`
+- [ ] `alert_email` variable added to `variables.tf` and all `*.tfvars`
+- [ ] All 6 `alarm_actions` wired to SNS topic
+- [ ] `terraform apply` completed
+- [ ] SNS subscription confirmation email clicked
+
+#### Deep Health Check
+- [ ] `backend/routes/health.py` updated with DB + Pinecone checks
+- [ ] `/health` returns 503 when DB is intentionally disconnected (local test)
+- [ ] `/health` returns 200 with both checks `ok` on staging ALB URL
+
+#### Grafana
+- [ ] Amazon Managed Grafana enabled in AWS Console
+- [ ] `aws_grafana_workspace` resource uncommented and applied
+- [ ] ECS dashboard (ID `550`) imported
+- [ ] RDS dashboard (ID `707`) imported
+- [ ] At least one team member has Grafana access via AWS SSO
+
+#### LangSmith
+- [ ] LangSmith account created, projects `huron-genai-staging` and `huron-genai-production` created
+- [ ] `LANGCHAIN_TRACING_V2=true` set in `backend/.env`
+- [ ] `LANGCHAIN_API_KEY` set in `backend/.env`
+- [ ] `LANGCHAIN_PROJECT=huron-genai-staging` set in staging `backend/.env`
+- [ ] `langsmith` package in `backend/requirements.txt`
+- [ ] `traceable` import + no-op fallback added to `main.py`
+- [ ] `@traceable` decorator added to `_source_guard` and `_llm_direct`
+- [ ] Metadata tags (dept, username, role) added in `query_endpoint`
+- [ ] Test trace visible in **huron-genai-staging** project with embed + Pinecone + LLM steps linked
+- [ ] Faithfulness score visible in trace metadata
+- [ ] After prod deploy: `LANGCHAIN_PROJECT` updated to `huron-genai-production` in prod env
