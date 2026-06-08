@@ -2,6 +2,8 @@
 Authentication routes: login, logout, MFA, token validation.
 """
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 import bcrypt
@@ -19,12 +21,31 @@ from models.schemas import LoginRequest
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
+_SSO_ENFORCED_ENVS = {"staging", "production", "prod"}
+_APP_ENV = os.getenv("APP_ENV", "dev").lower()
+
+
 @router.post("/login")
 async def login(req: LoginRequest):
     """Authenticate user and return JWT token."""
     user = get_user_by_login(req.username)
     if not user or not user["is_active"]:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # In staging/production: users provisioned via SSO must use the SSO path.
+    # Local password login is blocked for them — Duo MFA is enforced by Azure AD.
+    # Root account (username == 'root') is exempt for emergency access.
+    if (
+        _APP_ENV in _SSO_ENFORCED_ENVS
+        and user.get("auth_method") == "oidc"
+        and user["username"] != "root"
+    ):
+        write_audit(user["id"], user["username"], "local_login_blocked_sso_required")
+        raise HTTPException(
+            status_code=403,
+            detail="This account uses company SSO. Please sign in with Microsoft.",
+        )
+
     if not bcrypt.checkpw(req.password.encode(), user["password_hash"].encode()):
         write_audit(None, req.username, "auth_failure")
         raise HTTPException(status_code=401, detail="Invalid credentials")

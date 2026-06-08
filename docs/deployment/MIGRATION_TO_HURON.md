@@ -852,6 +852,206 @@ aws configure --profile personal
 
 ---
 
+## Phase 8.5 — Duo MFA / SSO-Only Login Enforcement
+
+> **Context:** Huron uses Duo Security as the MFA provider inside Azure AD (Entra ID).
+> Duo fires automatically when users authenticate via SSO — no Duo SDK integration needed.
+> This phase documents the code changes already made and what you need to action
+> in your AWS deployment to activate them.
+
+### What Changed in the Code
+
+Two backend files were updated. These changes are already committed and will deploy
+automatically via the existing CI/CD pipelines once GitHub Secrets are in place.
+
+#### `backend/core/database.py` — `get_user_by_login`
+
+**Before:**
+```python
+"SELECT id,username,email,full_name,password_hash,role,department,is_active "
+"FROM users WHERE username=?",
+```
+
+**After:**
+```python
+"SELECT id,username,email,full_name,password_hash,role,department,is_active,auth_method "
+"FROM users WHERE username=?",
+```
+
+`auth_method` is now returned with every login fetch so the enforcement check below
+has the value available.
+
+#### `backend/routes/auth.py` — `POST /api/v1/auth/login`
+
+Added environment-gated SSO-only enforcement before the bcrypt check:
+
+```python
+_SSO_ENFORCED_ENVS = {"staging", "production", "prod"}
+_APP_ENV = os.getenv("APP_ENV", "dev").lower()
+
+# In staging/production: users provisioned via SSO must use the SSO path.
+# Local password login is blocked for them — Duo MFA is enforced by Azure AD.
+# Root account is exempt for emergency access.
+if (
+    _APP_ENV in _SSO_ENFORCED_ENVS
+    and user.get("auth_method") == "oidc"
+    and user["username"] != "root"
+):
+    write_audit(user["id"], user["username"], "local_login_blocked_sso_required")
+    raise HTTPException(
+        status_code=403,
+        detail="This account uses company SSO. Please sign in with Microsoft.",
+    )
+```
+
+| `APP_ENV` value | SSO user tries local login | Local-only user | `root` |
+|-----------------|---------------------------|-----------------|--------|
+| `dev` | ✅ Allowed | ✅ Allowed | ✅ Allowed |
+| `staging` | ❌ 403 → must use SSO | ✅ Allowed | ✅ Allowed |
+| `production` | ❌ 403 → must use SSO | ✅ Allowed | ✅ Allowed |
+
+---
+
+### Actions Required on AWS
+
+#### Step 8.5.1 — Set `APP_ENV` in AWS Secrets Manager / ECS task definitions
+
+The enforcement only activates when `APP_ENV` is set correctly. Verify each environment:
+
+```bash
+# Check current value in Secrets Manager
+aws secretsmanager get-secret-value \
+  --secret-id huron/staging/app-env \
+  --query SecretString --output text
+
+# Set for staging
+aws secretsmanager put-secret-value \
+  --secret-id huron/staging/backend-env \
+  --secret-string '{"APP_ENV":"staging"}'
+
+# Set for production
+aws secretsmanager put-secret-value \
+  --secret-id huron/prod/backend-env \
+  --secret-string '{"APP_ENV":"production"}'
+```
+
+If `APP_ENV` is injected via ECS task definition directly:
+
+```bash
+# Get current task definition
+aws ecs describe-task-definition \
+  --task-definition huron-staging-backend \
+  --query "taskDefinition.containerDefinitions[0].environment"
+
+# Confirm APP_ENV=staging is present
+# If missing, add it via the ECS Console or re-apply Terraform
+```
+
+#### Step 8.5.2 — Verify the OIDC env vars are set in ECS (staging)
+
+SSO enforcement only blocks users who have `auth_method = 'oidc'` in the DB.
+That value is only written when users log in via the OIDC callback endpoint —
+which requires the OIDC env vars to be set:
+
+```bash
+# Check staging has OIDC vars configured
+aws secretsmanager get-secret-value \
+  --secret-id huron/staging/backend-env \
+  --query SecretString --output text | python -m json.tool | grep OIDC
+```
+
+Required variables:
+```
+OIDC_CLIENT_ID       = <Azure AD app client ID>
+OIDC_CLIENT_SECRET   = <Azure AD client secret>
+OIDC_AUTHORITY       = https://login.microsoftonline.com/<tenant-id>
+OIDC_REDIRECT_URI    = https://<staging-alb-domain>/api/v1/auth/oidc/callback
+```
+
+See `OIDC_SSO_SETUP.md` for how to register the app in Azure AD and obtain these values.
+Note that `OIDC_REDIRECT_URI` must be updated when the deployment moves from AWS ALB
+to Azure Container Apps (the domain will change).
+
+#### Step 8.5.3 — Force ECS redeploy to pick up code changes
+
+After confirming env vars are set, force a new ECS deployment to run the updated code:
+
+```bash
+# Staging
+aws ecs update-service \
+  --cluster huron-staging-cluster \
+  --service huron-staging-backend \
+  --force-new-deployment \
+  --region us-east-1
+
+aws ecs wait services-stable \
+  --cluster huron-staging-cluster \
+  --services huron-staging-backend \
+  --region us-east-1
+
+# Verify code is live
+curl -s https://<staging-alb-domain>/health | python -m json.tool
+```
+
+#### Step 8.5.4 — Test SSO enforcement on staging
+
+```bash
+# 1. Log in via SSO as a real company user
+#    Navigate to: https://<staging-alb-domain>/api/v1/auth/oidc/login
+#    Complete Duo Push challenge
+#    Confirm you land on the dashboard
+
+# 2. Confirm that user's auth_method is now 'oidc' in the DB
+#    (Connect to staging DB and run:)
+#    SELECT username, email, auth_method FROM users WHERE email = '<your-email>';
+
+# 3. Try to log in with that same user via the local password endpoint
+curl -X POST https://<staging-alb-domain>/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"<your-username>","password":"<your-password>"}'
+
+# Expected response:
+# HTTP 403
+# {"detail":"This account uses company SSO. Please sign in with Microsoft."}
+
+# 4. Confirm audit log recorded the blocked attempt
+#    SELECT * FROM audit_log WHERE action = 'local_login_blocked_sso_required'
+#    ORDER BY created_at DESC LIMIT 5;
+```
+
+#### Step 8.5.5 — Azure AD Conditional Access (verify Duo fires for this app)
+
+Even on AWS-hosted deployments, the OIDC flow goes through Microsoft Entra ID.
+Duo fires inside Microsoft's login page — not at the AWS level.
+
+Confirm Duo is required for the Huron app registration:
+
+1. **Azure Portal → Microsoft Entra ID → Security → Conditional Access → Policies**
+2. Find the policy covering the `Huron GenAI Knowledge Assistant` app registration
+3. Confirm **Grant: Require multi-factor authentication** is set
+4. Confirm **Policy status: On** (not Report-only)
+
+If no policy exists, see `DUO_MFA_INTEGRATION.md` → Section "Azure AD Conditional Access"
+for step-by-step instructions to create one.
+
+> **Important:** This verification is required whether you are on AWS or Azure.
+> Duo is controlled by Azure AD Conditional Access, not by the cloud hosting platform.
+
+---
+
+### What Does NOT Need to Change on AWS
+
+| Item | Reason |
+|------|--------|
+| ECS task definition structure | No new containers — same backend image |
+| ALB / target groups | No routing changes |
+| ECR repositories | Same image names and tags |
+| GitHub Actions workflows | Code change deploys automatically via existing pipelines |
+| RDS / PostgreSQL schema | `auth_method` column already exists in the `users` table |
+| Terraform AWS files | No infrastructure changes required |
+
+---
+
 ## Migration Checklist
 
 Use this to track progress:
@@ -905,6 +1105,17 @@ Use this to track progress:
 - [ ] Departments page shows 8 departments
 - [ ] Dashboard shows real data
 
+### Duo MFA / SSO Enforcement (Phase 8.5)
+- [ ] `APP_ENV=staging` confirmed on ECS staging task
+- [ ] `APP_ENV=production` confirmed on ECS prod task
+- [ ] OIDC env vars set in Secrets Manager for staging (`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_AUTHORITY`, `OIDC_REDIRECT_URI`)
+- [ ] SSO login via `/api/v1/auth/oidc/login` completes with Duo Push on staging
+- [ ] `auth_method = 'oidc'` written to DB after first SSO login
+- [ ] Local password login for SSO user returns HTTP 403 on staging
+- [ ] `local_login_blocked_sso_required` event visible in audit log
+- [ ] Azure AD Conditional Access policy status: **On** (not Report-only)
+- [ ] Root account local login still works (emergency access confirmed)
+
 ### Cleanup
 - [ ] Personal GitHub repo archived
 - [ ] Personal AWS infrastructure destroyed
@@ -920,6 +1131,8 @@ Use this to track progress:
 | `backend/.env` | API keys, DB URL, secrets | Created fresh on Huron machine |
 | `frontend/.env.local` | Backend API URL | Created fresh on Huron machine |
 | `.github/workflows/*.yml` | AWS account ID, region | Updated in Step 1.3 + Phase 5 |
+| `backend/core/database.py` | `auth_method` added to login SELECT | Already committed — auto-deploys |
+| `backend/routes/auth.py` | SSO-only enforcement block + `APP_ENV` gate | Already committed — auto-deploys |
 | `scripts/setup-github-secrets.*` | REPO reference | Updated in Step 1.3 |
 | `scripts/post-apply.*` | REPO reference | Updated in Step 1.3 |
 

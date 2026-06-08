@@ -1,0 +1,134 @@
+name: Deploy 2 — Staging (Azure)
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [staging]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-azure-staging
+  cancel-in-progress: false
+
+env:
+  ENVIRONMENT: staging
+  BACKEND_APP_NAME: huron-staging-backend
+  FRONTEND_APP_NAME: huron-staging-frontend
+  RESOURCE_GROUP: ${{ vars.AZURE_STAGING_RESOURCE_GROUP }}
+  ACR_SERVER: ${{ vars.AZURE_ACR_SERVER }}
+  BACKEND_URL: ${{ vars.AZURE_STAGING_BACKEND_URL }}
+
+jobs:
+  build-backend:
+    name: Build & Push — Backend
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_STAGING }}
+
+      - name: Login to ACR
+        run: az acr login --name $(echo ${{ env.ACR_SERVER }} | cut -d. -f1)
+
+      - id: meta
+        run: |
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "image=${{ env.ACR_SERVER }}/huron-backend:staging-$SHA" >> $GITHUB_OUTPUT
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile.production
+          push: true
+          tags: ${{ steps.meta.outputs.image }},${{ env.ACR_SERVER }}/huron-backend:staging-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+
+  build-frontend:
+    name: Build & Push — Frontend
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_STAGING }}
+
+      - name: Login to ACR
+        run: az acr login --name $(echo ${{ env.ACR_SERVER }} | cut -d. -f1)
+
+      - id: meta
+        run: |
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "image=${{ env.ACR_SERVER }}/huron-frontend:staging-$SHA" >> $GITHUB_OUTPUT
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile.production
+          push: true
+          tags: ${{ steps.meta.outputs.image }},${{ env.ACR_SERVER }}/huron-frontend:staging-latest
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ env.BACKEND_URL }}
+            BACKEND_URL=${{ env.BACKEND_URL }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+
+  deploy:
+    name: Deploy to Azure Container Apps — Staging
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    environment: staging
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_STAGING }}
+
+      - name: Update backend Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.BACKEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_SERVER }}/huron-backend:staging-$(echo ${{ github.sha }} | cut -c1-7)
+
+      - name: Update frontend Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.FRONTEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_SERVER }}/huron-frontend:staging-$(echo ${{ github.sha }} | cut -c1-7)
+
+      - name: Wait for revision to stabilise
+        run: sleep 60
+
+      - name: Health check
+        run: |
+          STATUS=$(curl -sf ${{ env.BACKEND_URL }}/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])")
+          [ "$STATUS" = "healthy" ] && echo "Health: $STATUS" || (echo "STAGING HEALTH FAILED: $STATUS"; exit 1)
+
+      - name: Summary
+        run: |
+          echo "### Azure Staging Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Backend** | ${{ env.BACKEND_URL }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **API docs** | ${{ env.BACKEND_URL }}/docs |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Backend image** | ${{ needs.build-backend.outputs.image }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Frontend image** | ${{ needs.build-frontend.outputs.image }} |" >> $GITHUB_STEP_SUMMARY

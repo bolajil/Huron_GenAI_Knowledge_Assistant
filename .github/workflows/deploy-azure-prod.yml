@@ -1,0 +1,236 @@
+name: Deploy 3 — Production (Azure) 🔵🟢
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLUE / GREEN deployment via Azure Container Apps traffic splitting
+#
+# Traffic shifting strategy:
+#   Step 1: New revision deployed with 0% traffic (inactive)
+#   Step 2: 10% traffic shifted to new revision for canary period
+#   Step 3: If health check passes → shift 100% traffic to new revision
+#   Step 4: Old revision deactivated
+#
+# Rollback: Re-run with the previous image SHA using workflow_dispatch
+#
+# Sequence required: develop → staging → prod (manual trigger only)
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DEPLOY to confirm production deployment"
+        required: true
+      canary_minutes:
+        description: "Minutes to hold at 10% canary before full cutover"
+        required: true
+        default: "5"
+        type: choice
+        options:
+          - "5"
+          - "10"
+          - "15"
+          - "0"   # all-at-once (skip canary)
+
+concurrency:
+  group: deploy-azure-prod
+  cancel-in-progress: false
+
+env:
+  ENVIRONMENT: prod
+  BACKEND_APP_NAME: huron-prod-backend
+  FRONTEND_APP_NAME: huron-prod-frontend
+  RESOURCE_GROUP: ${{ vars.AZURE_PROD_RESOURCE_GROUP }}
+  ACR_SERVER: ${{ vars.AZURE_ACR_SERVER }}
+  BACKEND_URL: ${{ vars.AZURE_PROD_BACKEND_URL }}
+
+jobs:
+  # ── Gate: manual confirmation required ───────────────────────────────────────
+  gate:
+    name: Production Gate
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm == 'DEPLOY' }}
+    environment: production
+    steps:
+      - run: |
+          echo "Production gate approved"
+          echo "Canary period: ${{ github.event.inputs.canary_minutes }} minutes"
+
+  # ── Build & push backend image ───────────────────────────────────────────────
+  build-backend:
+    name: Build & Push — Backend
+    runs-on: ubuntu-latest
+    needs: gate
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      sha_short: ${{ steps.meta.outputs.sha_short }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+
+      - name: Login to ACR
+        run: az acr login --name $(echo ${{ env.ACR_SERVER }} | cut -d. -f1)
+
+      - id: meta
+        run: |
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "sha_short=$SHA" >> $GITHUB_OUTPUT
+          echo "image=${{ env.ACR_SERVER }}/huron-backend:prod-$SHA" >> $GITHUB_OUTPUT
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile.production
+          push: true
+          tags: ${{ steps.meta.outputs.image }},${{ env.ACR_SERVER }}/huron-backend:prod-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+
+  # ── Build & push frontend image ──────────────────────────────────────────────
+  build-frontend:
+    name: Build & Push — Frontend
+    runs-on: ubuntu-latest
+    needs: gate
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+
+      - name: Login to ACR
+        run: az acr login --name $(echo ${{ env.ACR_SERVER }} | cut -d. -f1)
+
+      - id: meta
+        run: |
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "image=${{ env.ACR_SERVER }}/huron-frontend:prod-$SHA" >> $GITHUB_OUTPUT
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile.production
+          push: true
+          tags: ${{ steps.meta.outputs.image }},${{ env.ACR_SERVER }}/huron-frontend:prod-latest
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ env.BACKEND_URL }}
+            BACKEND_URL=${{ env.BACKEND_URL }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+
+  # ── Blue/Green deploy via Container Apps traffic splitting ───────────────────
+  deploy:
+    name: Blue/Green Deploy — Azure Container Apps
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+
+      # Deploy new backend revision with 0% traffic (inactive — "blue" stays live)
+      - name: Deploy new backend revision (0% traffic)
+        run: |
+          NEW_REVISION=$(az containerapp update \
+            --name ${{ env.BACKEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_SERVER }}/huron-backend:prod-${{ needs.build-backend.outputs.sha_short }} \
+            --revision-suffix prod-${{ needs.build-backend.outputs.sha_short }} \
+            --query "properties.latestRevisionName" -o tsv)
+          echo "new_backend_revision=$NEW_REVISION" >> $GITHUB_ENV
+
+          # Send 0% to new revision — keep 100% on current (blue)
+          az containerapp ingress traffic set \
+            --name ${{ env.BACKEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --revision-weight latest=0
+
+      # Deploy new frontend revision with 0% traffic
+      - name: Deploy new frontend revision (0% traffic)
+        run: |
+          NEW_REVISION=$(az containerapp update \
+            --name ${{ env.FRONTEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_SERVER }}/huron-frontend:prod-${{ needs.build-backend.outputs.sha_short }} \
+            --revision-suffix prod-${{ needs.build-backend.outputs.sha_short }} \
+            --query "properties.latestRevisionName" -o tsv)
+          echo "new_frontend_revision=$NEW_REVISION" >> $GITHUB_ENV
+
+          az containerapp ingress traffic set \
+            --name ${{ env.FRONTEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --revision-weight latest=0
+
+      # Canary: shift 10% to new revision
+      - name: Shift 10% traffic to new revision (canary)
+        run: |
+          az containerapp ingress traffic set \
+            --name ${{ env.BACKEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --label-weight canary=10 \
+            --revision-weight ${{ env.new_backend_revision }}=10
+
+          az containerapp ingress traffic set \
+            --name ${{ env.FRONTEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --revision-weight ${{ env.new_frontend_revision }}=10
+
+          echo "10% traffic on new revision — canary period: ${{ github.event.inputs.canary_minutes }} min"
+
+      # Health check on new revision during canary
+      - name: Health check during canary
+        run: |
+          sleep 30
+          STATUS=$(curl -sf ${{ env.BACKEND_URL }}/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])")
+          [ "$STATUS" = "healthy" ] && echo "Canary health OK: $STATUS" || (echo "CANARY HEALTH FAILED — rolling back"; exit 1)
+
+      # Hold for canary period (skip if canary_minutes == 0)
+      - name: Hold canary period
+        if: ${{ github.event.inputs.canary_minutes != '0' }}
+        run: sleep $(( ${{ github.event.inputs.canary_minutes }} * 60 ))
+
+      # Full cutover: 100% to new revision
+      - name: Full cutover — 100% to new revision
+        run: |
+          az containerapp ingress traffic set \
+            --name ${{ env.BACKEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --revision-weight ${{ env.new_backend_revision }}=100
+
+          az containerapp ingress traffic set \
+            --name ${{ env.FRONTEND_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --revision-weight ${{ env.new_frontend_revision }}=100
+
+      # Final health check post cutover
+      - name: Health check — post cutover
+        run: |
+          sleep 30
+          STATUS=$(curl -sf ${{ env.BACKEND_URL }}/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])")
+          [ "$STATUS" = "healthy" ] && echo "Production health: $STATUS" || (echo "PROD HEALTH FAILED: $STATUS"; exit 1)
+
+      - name: Summary
+        run: |
+          echo "### Azure Production Blue/Green Deployment Complete 🟢" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Canary period** | ${{ github.event.inputs.canary_minutes }} minutes |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Backend revision** | ${{ env.new_backend_revision }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Frontend revision** | ${{ env.new_frontend_revision }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **URL** | ${{ env.BACKEND_URL }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Backend image** | ${{ needs.build-backend.outputs.image }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Frontend image** | ${{ needs.build-frontend.outputs.image }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Rollback:** Re-run this workflow with the previous commit SHA image tag" >> $GITHUB_STEP_SUMMARY

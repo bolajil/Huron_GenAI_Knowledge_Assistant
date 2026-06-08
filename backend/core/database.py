@@ -83,7 +83,7 @@ def get_user_by_login(username: str) -> Optional[dict]:
     """Fetch user by username for login."""
     with db_conn() as conn:
         row = conn.execute(
-            "SELECT id,username,email,full_name,password_hash,role,department,is_active "
+            "SELECT id,username,email,full_name,password_hash,role,department,is_active,auth_method "
             "FROM users WHERE username=?",
             (username,)
         ).fetchone()
