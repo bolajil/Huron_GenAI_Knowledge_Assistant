@@ -6,7 +6,7 @@ Prerequisites:
   pip install psycopg2-binary
 
 Usage:
-  export DATABASE_URL="postgresql://huron_user:REDACTED_DB_PASSWORD@localhost:5436/huron"
+  export DATABASE_URL="postgresql://huron_user:<your-db-password>@localhost:5436/huron"
   python migrate_sqlite_to_postgres.py
 """
 
@@ -116,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_token_blacklist_exp    ON token_blacklist(expired
 def run():
     if not PG_URL:
         print("ERROR: Set DATABASE_URL environment variable")
-        print("Example: export DATABASE_URL=postgresql://huron_user:REDACTED_DB_PASSWORD@localhost:5436/huron")
+        print("Example: export DATABASE_URL=postgresql://huron_user:<your-db-password>@localhost:5436/huron")
         sys.exit(1)
 
     if not SQLITE_PATH.exists():
