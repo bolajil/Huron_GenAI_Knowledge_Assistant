@@ -159,7 +159,10 @@ else
   docker push "$ACR_SERVER/huron-backend:latest"
 
   info "  Building frontend..."
+  # Pass BACKEND_URL so Next.js proxy rewrites point to the real backend at build time.
+  BACKEND_URL_VAL="https://$(terraform output -raw backend_fqdn 2>/dev/null || echo 'localhost:8004')"
   docker build -f "$PROJECT_ROOT/frontend/Dockerfile.production" \
+    --build-arg BACKEND_URL="$BACKEND_URL_VAL" \
     -t "$ACR_SERVER/huron-frontend:latest" "$PROJECT_ROOT/frontend"
   docker push "$ACR_SERVER/huron-frontend:latest"
 

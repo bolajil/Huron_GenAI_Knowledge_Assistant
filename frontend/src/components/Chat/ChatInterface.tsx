@@ -8,7 +8,14 @@ import {
 import { api, Conversation, ConversationMessage } from "../../services/api";
 import { useAuth } from "../../contexts/auth-context";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004";
+function getBackendBase(): string {
+  if (typeof window === "undefined") return "http://localhost:8004";
+  const hostname = window.location.hostname;
+  if (hostname.includes("azurecontainerapps.io")) {
+    return `https://${hostname.replace("huron-dev-frontend", "huron-dev-backend")}`;
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004";
+}
 
 const getAuthHeader = (): Record<string, string> => {
   if (typeof window === "undefined") return {};
@@ -51,7 +58,7 @@ export function ChatInterface() {
 
   // ── Load indexes ───────────────────────────────────────────────────────────
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/v1/indexes`, { headers: getAuthHeader() })
+    fetch(`${getBackendBase()}/api/v1/indexes`, { headers: getAuthHeader() })
       .then((r) => r.json())
       .then((data) => {
         if (data.indexes?.length) {
@@ -183,7 +190,7 @@ export function ChatInterface() {
       ?? user?.department ?? "general";
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/chat`, {
+      const response = await fetch(`${getBackendBase()}/api/v1/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeader() },
         body: JSON.stringify({

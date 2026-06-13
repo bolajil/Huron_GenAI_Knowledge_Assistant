@@ -75,8 +75,10 @@ export default function MFAPage() {
       const pendingToken = localStorage.getItem("pending_auth_token");
       const pendingUser = localStorage.getItem("pending_user");
 
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const response = await fetch(`${API_BASE}/api/v1/auth/mfa/verify`, {
+      const backendBase = typeof window !== "undefined" && window.location.hostname.includes("azurecontainerapps.io")
+        ? `https://${window.location.hostname.replace("huron-dev-frontend", "huron-dev-backend")}`
+        : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004");
+      const response = await fetch(`${backendBase}/api/v1/auth/mfa/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, pending_token: pendingToken }),

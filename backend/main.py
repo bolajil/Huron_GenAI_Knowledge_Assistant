@@ -288,6 +288,15 @@ def _seed_db():
                     "INSERT INTO departments (code,display_name,namespace,classification) VALUES (?,?,?,?)",
                     (code, name, ns, cls),
                 )
+        # Promote HURON_ADMIN_EMAIL to root on startup (useful for SSO demo accounts)
+        _admin_email = os.getenv("HURON_ADMIN_EMAIL", "").strip().lower()
+        if _admin_email:
+            conn.execute(
+                "UPDATE users SET role='root', department='all' "
+                "WHERE LOWER(email) = ? AND role != 'root'",
+                (_admin_email,),
+            )
+            logger.info("HURON_ADMIN_EMAIL %s promoted to root on startup", _admin_email)
         conn.commit()
 
 

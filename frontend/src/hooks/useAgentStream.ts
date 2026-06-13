@@ -3,7 +3,14 @@
 // passed as a query param: /api/v1/agent/stream/{run_id}?token=...
 import { useState, useRef, useCallback } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004";
+function getBackendBase(): string {
+  if (typeof window === "undefined") return "http://localhost:8004";
+  const hostname = window.location.hostname;
+  if (hostname.includes("azurecontainerapps.io")) {
+    return `https://${hostname.replace("huron-dev-frontend", "huron-dev-backend")}`;
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004";
+}
 
 export interface AgentStep {
   run_id:               string;
@@ -75,7 +82,7 @@ export function useAgentStream(): UseAgentStreamReturn {
     // POST to start the run
     let rid: string;
     try {
-      const res = await fetch(`${API}/api/v1/agent/run`, {
+      const res = await fetch(`${getBackendBase()}/api/v1/agent/run`, {
         method:  "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body:    JSON.stringify({ query, dept, model, max_steps: maxSteps }),
@@ -100,7 +107,7 @@ export function useAgentStream(): UseAgentStreamReturn {
     runIdRef.current = rid;
 
     // Subscribe to SSE stream (token in query param — EventSource has no header support)
-    const es = new EventSource(`${API}/api/v1/agent/stream/${rid}?token=${encodeURIComponent(token)}`);
+    const es = new EventSource(`${getBackendBase()}/api/v1/agent/stream/${rid}?token=${encodeURIComponent(token)}`);
     esRef.current = es;
 
     es.addEventListener("step", (e: MessageEvent) => {
@@ -137,7 +144,7 @@ export function useAgentStream(): UseAgentStreamReturn {
 
     const token = localStorage.getItem("auth_token");
     try {
-      await fetch(`${API}/api/v1/agent/stop/${rid}`, {
+      await fetch(`${getBackendBase()}/api/v1/agent/stop/${rid}`, {
         method:  "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
