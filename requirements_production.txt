@@ -49,3 +49,7 @@ prometheus-client==0.21.1
 # ── CORS / rate-limit ────────────────────────────────────────────────────────
 slowapi==0.1.9
 starlette==0.41.3
+
+# ── Azure / Workday / SharePoint integrations ─────────────────────────────────
+httpx>=0.27.0
+apscheduler==3.10.4

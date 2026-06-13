@@ -37,6 +37,8 @@ archive_cleanup_*/uploads/
 .streamlit/
 
 # Config secrets
+terraform/azure/.secrets.ps1
+terraform/azure/.secrets.sh
 config/storage.env
 config/*.env
 config/*.env.bak
@@ -201,3 +203,6 @@ backups/
 *.tfstate
 *.tfstate.backup
 .terraform/
+
+# Claude memory (local only)
+.claude/memory/

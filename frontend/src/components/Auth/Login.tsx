@@ -54,8 +54,13 @@ export function Login() {
   };
 
   const handleSSOLogin = (provider: "azure" | "okta") => {
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004";
-    window.location.href = `${apiBase}/api/v1/auth/oidc/login?provider=${provider}`;
+    const hostname = typeof window !== "undefined" ? window.location.hostname : "";
+    // In Azure Container Apps, frontend and backend share the same FQDN suffix.
+    // Derive the backend URL at runtime to avoid build-time env var baking.
+    const backendBase = hostname.includes("azurecontainerapps.io")
+      ? `https://${hostname.replace("huron-dev-frontend", "huron-dev-backend")}`
+      : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004");
+    window.location.href = `${backendBase}/api/v1/auth/oidc/login?provider=${provider}`;
   };
 
   return (

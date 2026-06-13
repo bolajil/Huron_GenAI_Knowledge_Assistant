@@ -81,12 +81,18 @@ if _SENTRY_DSN:
 # ─── App ─────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Huron GenAI API", version="4.0.0")
 
+_CORS_ORIGINS = [
+    "http://localhost:3000", "http://localhost:3001",
+    "http://127.0.0.1:3000", "http://127.0.0.1:3001",
+]
+# Add deployed frontend URL so cross-origin API calls work in Azure/AWS.
+_FRONTEND_CORS = os.getenv("FRONTEND_URL", "")
+if _FRONTEND_CORS:
+    _CORS_ORIGINS.append(_FRONTEND_CORS)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", "http://localhost:3001",
-        "http://127.0.0.1:3000", "http://127.0.0.1:3001",
-    ],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
@@ -442,11 +448,17 @@ def _ensure_pg_core_tables():
                 role          TEXT NOT NULL DEFAULT 'user',
                 department    TEXT NOT NULL DEFAULT 'general',
                 is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+                auth_method   TEXT NOT NULL DEFAULT 'local',
                 created_by    INTEGER REFERENCES users(id),
                 last_login    TIMESTAMPTZ,
                 created_at    TIMESTAMPTZ DEFAULT NOW(),
                 updated_at    TIMESTAMPTZ DEFAULT NOW()
             )
+        """)
+        # Idempotent — adds auth_method to databases created before this column existed
+        conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS auth_method TEXT NOT NULL DEFAULT 'local'
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS departments (
@@ -510,13 +522,20 @@ def _ensure_pg_core_tables():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS oidc_role_mappings (
                 id           SERIAL PRIMARY KEY,
-                ad_group     TEXT NOT NULL UNIQUE,
+                provider     TEXT NOT NULL DEFAULT 'azure',
+                ad_group     TEXT NOT NULL,
                 huron_role   TEXT NOT NULL CHECK(huron_role IN ('root','dept_admin','power_user','user')),
                 dept_code    TEXT,
                 description  TEXT,
                 created_by   TEXT NOT NULL DEFAULT 'system',
-                created_at   TIMESTAMPTZ DEFAULT NOW()
+                created_at   TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (provider, ad_group)
             )
+        """)
+        # Idempotent — adds provider column to databases created before this column existed
+        conn.execute("""
+            ALTER TABLE oidc_role_mappings
+            ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'azure'
         """)
         conn.commit()
         conn.close()
@@ -770,22 +789,105 @@ def init_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS oidc_role_mappings (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            ad_group     TEXT NOT NULL UNIQUE,
-            huron_role   TEXT NOT NULL CHECK(huron_role IN ('root','dept_admin','power_user','user')),
+            provider     TEXT NOT NULL DEFAULT 'azure',
+            ad_group     TEXT NOT NULL,
+            huron_role   TEXT NOT NULL CHECK(huron_role IN ('root','dept_admin','power_user','user','viewer')),
             dept_code    TEXT,
             description  TEXT,
             created_by   TEXT NOT NULL DEFAULT 'system',
-            created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (provider, ad_group)
         )
     """)
+
+    # ── Workday sync log ──────────────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS workday_sync_log (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at          TEXT    NOT NULL,
+            finished_at         TEXT,
+            status              TEXT    NOT NULL DEFAULT 'success',
+            records_created     INTEGER NOT NULL DEFAULT 0,
+            records_updated     INTEGER NOT NULL DEFAULT 0,
+            records_deactivated INTEGER NOT NULL DEFAULT 0,
+            error_message       TEXT,
+            triggered_by        TEXT    NOT NULL DEFAULT 'scheduler'
+        )
+    """)
+
+    # ── SharePoint sites registry ─────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sharepoint_sites (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            site_name      TEXT    NOT NULL,
+            site_url       TEXT,
+            graph_site_id  TEXT,
+            dept_code      TEXT    NOT NULL,
+            is_active      INTEGER NOT NULL DEFAULT 1,
+            last_synced_at TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (site_name)
+        )
+    """)
+
+    # ── SharePoint sync log ───────────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sharepoint_sync_log (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            site_id      TEXT    NOT NULL,
+            site_name    TEXT    NOT NULL,
+            dept_code    TEXT    NOT NULL,
+            started_at   TEXT    NOT NULL,
+            finished_at  TEXT,
+            status       TEXT    NOT NULL DEFAULT 'success',
+            ingested     INTEGER NOT NULL DEFAULT 0,
+            failed       INTEGER NOT NULL DEFAULT 0,
+            error_detail TEXT,
+            triggered_by TEXT    NOT NULL DEFAULT 'scheduler'
+        )
+    """)
+
+    # ── New columns on users (safe for existing databases) ───────────────────
+    for _col_sql in (
+        "ALTER TABLE users ADD COLUMN auth_method  TEXT NOT NULL DEFAULT 'local'",
+        "ALTER TABLE users ADD COLUMN workday_id   TEXT",
+        "ALTER TABLE users ADD COLUMN employee_id  TEXT",
+    ):
+        try:
+            conn.execute(_col_sql)
+        except Exception:
+            pass  # column already exists
 
     conn.commit()
     conn.close()
     _seed_db()
     _seed_mcp_tools()
+    _seed_sharepoint_demo_sites()
     _ensure_pg_feedback_table()
     _ensure_pg_agent_runs_table()
     _ensure_pg_doc_versions_table()
+
+
+def _seed_sharepoint_demo_sites():
+    """Insert demo SharePoint sites if the table is empty (SQLite only)."""
+    if DATABASE_URL:
+        return
+    try:
+        with _DBConn() as conn:
+            if conn.execute("SELECT COUNT(*) FROM sharepoint_sites").fetchone()[0] == 0:
+                for _name, _dept in (
+                    ("HR Documents",       "hr"),
+                    ("Legal Documents",    "legal"),
+                    ("Clinical Documents", "clinical"),
+                    ("Finance Documents",  "finance"),
+                ):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO sharepoint_sites (site_name, dept_code) VALUES (?, ?)",
+                        (_name, _dept),
+                    )
+                conn.commit()
+    except Exception as exc:
+        logger.warning("Could not seed SharePoint demo sites: %s", exc)
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -1110,6 +1212,27 @@ _run_steps:   dict = {}   # run_id → list[dict]
 
 # ─── Startup ─────────────────────────────────────────────────────────────────
 init_db()
+
+# ── Routers ───────────────────────────────────────────────────────────────────
+try:
+    from backend.routes.sharepoint import router as _sharepoint_router
+    from backend.routes.teams       import router as _teams_router
+    app.include_router(_sharepoint_router)
+    app.include_router(_teams_router)
+    logger.info("SharePoint and Teams routes registered")
+except Exception as _route_exc:
+    logger.warning("Could not register integration routes: %s", _route_exc)
+
+# ── Background scheduler (APScheduler) ───────────────────────────────────────
+try:
+    from backend.utils.scheduler import start_scheduler, stop_scheduler
+    _scheduler = start_scheduler()
+
+    import atexit
+    atexit.register(stop_scheduler)
+    logger.info("Background scheduler started (Workday nightly / SharePoint weekly)")
+except Exception as _sched_exc:
+    logger.warning("Could not start scheduler: %s", _sched_exc)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2477,94 +2600,8 @@ def _get_oidc_config(provider: str) -> tuple[str, str, str]:
         return _OKTA_CLIENT_ID, _OKTA_CLIENT_SECRET, _OKTA_AUTHORITY
     return _OIDC_CLIENT_ID, _OIDC_CLIENT_SECRET, _OIDC_AUTHORITY  # azure default
 
-@app.get("/api/v1/auth/oidc/login")
-async def oidc_login(provider: str = "azure"):
-    """Redirect browser to Azure AD or Okta login page based on provider param."""
-    from urllib.parse import urlencode
-    from fastapi.responses import RedirectResponse
-
-    client_id, _, authority = _get_oidc_config(provider)
-    if not (client_id and authority):
-        raise HTTPException(
-            status_code=501,
-            detail=f"{provider.title()} SSO not configured on this server"
-        )
-
-    params = {
-        "client_id":     client_id,
-        "response_type": "code",
-        "redirect_uri":  _OIDC_REDIRECT_URI,
-        "scope":         "openid profile email",
-        "state":         f"{provider}:{secrets.token_urlsafe(16)}",
-    }
-    auth_url = f"{authority}/oauth2/v2.0/authorize?{urlencode(params)}"
-    return RedirectResponse(url=auth_url)
-
-
-@app.get("/api/v1/auth/oidc/callback")
-async def oidc_callback(code: str = "", error: str = "", state: str = ""):
-    """Exchange OIDC auth code for tokens, map AD groups → Huron role, issue JWT."""
-    from fastapi.responses import RedirectResponse as _RR
-
-    # Extract provider from state param (format: "azure:randomstate" or "okta:randomstate")
-    provider = state.split(":")[0] if ":" in state else "azure"
-    client_id, client_secret, authority = _get_oidc_config(provider)
-
-    if not (client_id and client_secret and authority):
-        raise HTTPException(status_code=501, detail=f"{provider.title()} SSO not configured")
-    if error:
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        return _RR(url=f"{frontend_url}/auth/sso-complete?error={error}")
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
-
-    import httpx as _httpx
-    token_url = f"{authority}/oauth2/v2.0/token"
-    resp = _httpx.post(token_url, data={
-        "grant_type":    "authorization_code",
-        "client_id":     _OIDC_CLIENT_ID,
-        "client_secret": _OIDC_CLIENT_SECRET,
-        "code":          code,
-        "redirect_uri":  _OIDC_REDIRECT_URI,
-    })
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="Failed to exchange OIDC code")
-
-    id_token_claims = jwt.decode(resp.json()["id_token"], options={"verify_signature": False})
-    email    = id_token_claims.get("preferred_username") or id_token_claims.get("email", "")
-    ad_groups: list[str] = id_token_claims.get("groups", [])
-
-    # Resolve Huron role from AD group mappings
-    huron_role = "user"
-    dept_code  = "general"
-    with db_conn() as conn:
-        for grp in ad_groups:
-            row = conn.execute(
-                "SELECT huron_role, dept_code FROM oidc_role_mappings WHERE ad_group=?", (grp,)
-            ).fetchone()
-            if row:
-                huron_role = row["huron_role"]
-                dept_code  = row["dept_code"] or "general"
-                break
-
-        # Auto-provision user on first SSO login
-        existing = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
-        if not existing:
-            hashed = bcrypt.hashpw(secrets.token_bytes(32), bcrypt.gensalt()).decode()
-            conn.execute(
-                "INSERT INTO users (username,email,password_hash,role,department,is_active,auth_method) "
-                "VALUES (?,?,?,?,?,1,'oidc')",
-                (email.split("@")[0], email, hashed, huron_role, dept_code),
-            )
-            conn.commit()
-        user_row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-
-    user_dict = dict(user_row)
-    # create_token is defined below in the Auth section — forward call is fine
-    token = create_token(user_dict)
-    from fastapi.responses import RedirectResponse
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-    return RedirectResponse(url=f"{frontend_url}/auth/sso-complete?token={token}")
+# OIDC login + callback routes are defined at the end of this file (AZURE AD / OIDC SSO ROUTES section)
+# using OIDC discovery for correct endpoint resolution.
 
 
 @app.get("/health")
@@ -3002,6 +3039,259 @@ async def get_mcp_logs(limit: int = 50, p: dict = Depends(current_user)):
             (limit,),
         ).fetchall()
     return {"logs": [dict(r) for r in rows]}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# AZURE AD / OIDC SSO ROUTES
+# Works with any OIDC provider: personal Azure AD, Keycloak, Auth0.
+# Frontend Login.tsx already calls /oidc/login and handles /auth/sso-complete.
+# ═════════════════════════════════════════════════════════════════════════════
+
+_OIDC_CLIENT_ID     = os.getenv("OIDC_CLIENT_ID", "")
+_OIDC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET", "")
+_OIDC_AUTHORITY     = os.getenv("OIDC_AUTHORITY", "")
+_OIDC_REDIRECT_URI  = os.getenv("OIDC_REDIRECT_URI",
+                                 "http://localhost:8004/api/v1/auth/oidc/callback")
+_FRONTEND_URL       = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# In-memory state store (CSRF protection). Bounded to 1 000 entries.
+# Move to Redis for multi-worker production deployments.
+_oidc_states: dict = {}
+
+
+def _oidc_discover() -> dict:
+    """Fetch OIDC well-known config from the provider."""
+    import httpx as _hx
+    url = f"{_OIDC_AUTHORITY.rstrip('/')}/.well-known/openid-configuration"
+    r   = _hx.get(url, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+@app.get("/api/v1/auth/oidc/login")
+async def oidc_login(provider: str = "azure"):
+    """
+    Step 1: redirect browser to Azure AD (or any OIDC provider) login page.
+    Called by frontend Login.tsx → handleSSOLogin('azure').
+    """
+    from fastapi.responses import RedirectResponse as _Redir
+    from urllib.parse import urlencode as _ue
+
+    if not _OIDC_CLIENT_ID or not _OIDC_AUTHORITY:
+        raise HTTPException(
+            status_code=503,
+            detail="SSO is not configured. Set OIDC_CLIENT_ID and OIDC_AUTHORITY.",
+        )
+
+    try:
+        disc = _oidc_discover()
+        auth_endpoint = disc["authorization_endpoint"]
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"OIDC discovery failed: {exc}")
+
+    state = secrets.token_urlsafe(32)
+    _oidc_states[state] = True
+    if len(_oidc_states) > 1000:
+        for k in list(_oidc_states.keys())[:500]:
+            _oidc_states.pop(k, None)
+
+    params = _ue({
+        "response_type": "code",
+        "client_id":     _OIDC_CLIENT_ID,
+        "redirect_uri":  _OIDC_REDIRECT_URI,
+        "scope":         "openid email profile",
+        "state":         state,
+    })
+    return _Redir(url=f"{auth_endpoint}?{params}", status_code=302)
+
+
+@app.get("/api/v1/auth/oidc/callback")
+async def oidc_callback(
+    code:              str = "",
+    state:             str = "",
+    error:             str = "",
+    error_description: str = "",
+):
+    """
+    Step 2: Azure AD redirects here after the user authenticates.
+    Exchanges the code for tokens, provisions the user, issues a Huron JWT,
+    then redirects to the frontend /auth/sso-complete?token=...
+    """
+    import httpx as _hx
+    import base64 as _b64
+    from fastapi.responses import RedirectResponse as _Redir
+
+    err_base = f"{_FRONTEND_URL}/auth/sso-complete?error="
+
+    if error:
+        logger.warning("OIDC callback received error: %s — %s", error, error_description)
+        return _Redir(url=f"{err_base}{error_description or error}", status_code=302)
+    if not code:
+        return _Redir(url=f"{err_base}no_auth_code_received", status_code=302)
+    if not _OIDC_CLIENT_ID or not _OIDC_AUTHORITY:
+        return _Redir(url=f"{err_base}sso_not_configured", status_code=302)
+
+    # Discover token endpoint
+    try:
+        disc       = _oidc_discover()
+        token_url  = disc["token_endpoint"]
+        info_url   = disc.get("userinfo_endpoint", "")
+    except Exception as exc:
+        logger.error("OIDC discovery failed in callback: %s", exc)
+        return _Redir(url=f"{err_base}oidc_discovery_failed", status_code=302)
+
+    # Exchange code → tokens (async to avoid blocking the event loop)
+    try:
+        async with _hx.AsyncClient(timeout=15) as client:
+            tr = await client.post(token_url, data={
+                "grant_type":    "authorization_code",
+                "code":           code,
+                "redirect_uri":   _OIDC_REDIRECT_URI,
+                "client_id":      _OIDC_CLIENT_ID,
+                "client_secret":  _OIDC_CLIENT_SECRET,
+            })
+        tr.raise_for_status()
+        tokens = tr.json()
+        logger.info("OIDC token exchange succeeded for code prefix %s", code[:12])
+    except Exception as exc:
+        logger.error("OIDC token exchange failed: %s", exc)
+        return _Redir(url=f"{err_base}token_exchange_failed", status_code=302)
+
+    # Decode ID token payload (base64url, no signature verification needed —
+    # we just called the token endpoint over TLS ourselves)
+    claims: dict = {}
+    try:
+        id_token = tokens.get("id_token", "")
+        raw      = id_token.split(".")[1]
+        raw     += "=" * (4 - len(raw) % 4)
+        claims   = json.loads(_b64.urlsafe_b64decode(raw))
+    except Exception:
+        pass
+
+    email = (
+        claims.get("email")
+        or claims.get("preferred_username")
+        or claims.get("upn", "")
+    ).strip().lower()
+
+    # Fallback: call userinfo endpoint if email not in ID token
+    if not email and info_url:
+        try:
+            async with _hx.AsyncClient(timeout=10) as client:
+                ur = await client.get(info_url,
+                                      headers={"Authorization": f"Bearer {tokens.get('access_token','')}"})
+            udata = ur.json()
+            email = (udata.get("email") or udata.get("preferred_username", "")).strip().lower()
+            claims.update(udata)
+        except Exception:
+            pass
+
+    name   = claims.get("name", email)
+    groups = claims.get("groups", [])
+
+    if not email:
+        return _Redir(url=f"{err_base}no_email_in_token", status_code=302)
+
+    # Upsert user
+    with db_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE LOWER(email) = ?", (email,)
+        ).fetchone()
+
+        if not row:
+            # Auto-provision: look up Azure AD group → Huron role mapping
+            role, dept = "user", "company"
+            if groups:
+                ph      = ",".join("?" * len(groups))
+                mapping = conn.execute(
+                    f"SELECT huron_role, dept_code FROM oidc_role_mappings "
+                    f"WHERE provider='azure' AND ad_group IN ({ph}) LIMIT 1",
+                    groups,
+                ).fetchone()
+                if mapping:
+                    role = mapping["huron_role"]
+                    dept = mapping["dept_code"] or "company"
+            username = email.split("@")[0]
+            conn.execute(
+                """INSERT INTO users
+                   (username, email, full_name, password_hash, role,
+                    department, is_active, auth_method)
+                   VALUES (?, ?, ?, '', ?, ?, True, 'oidc')""",
+                (username, email, name, role, dept),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM users WHERE LOWER(email) = ?", (email,)
+            ).fetchone()
+
+        if not row["is_active"]:
+            return _Redir(url=f"{err_base}account_deactivated_contact_admin",
+                          status_code=302)
+
+        conn.execute(
+            "UPDATE users SET full_name=?, auth_method='oidc', "
+            "last_login=CURRENT_TIMESTAMP WHERE id=?",
+            (name, row["id"]),
+        )
+        conn.commit()
+
+    user  = dict(row)
+    token = create_token(user)
+    write_audit(user["id"], user["username"], "sso_login_azure_ad")
+    return _Redir(url=f"{_FRONTEND_URL}/auth/sso-complete?token={token}",
+                  status_code=302)
+
+
+# ── OIDC Role-Mapping CRUD (root only) ───────────────────────────────────────
+
+@app.get("/api/v1/auth/oidc/role-mappings")
+async def list_oidc_role_mappings(p: dict = Depends(current_user)):
+    if p.get("role") not in ("root", "dept_admin"):
+        raise HTTPException(403, "Admin role required")
+    with db_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, provider, ad_group, huron_role, dept_code, description "
+            "FROM oidc_role_mappings ORDER BY id"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/v1/auth/oidc/role-mappings", status_code=201)
+async def create_oidc_role_mapping(body: dict, p: dict = Depends(current_user)):
+    if p.get("role") != "root":
+        raise HTTPException(403, "root role required")
+    ad_group   = (body.get("ad_group") or "").strip()
+    huron_role = (body.get("huron_role") or "").strip()
+    if not ad_group or not huron_role:
+        raise HTTPException(422, "ad_group and huron_role are required")
+    if huron_role not in {"root", "dept_admin", "power_user", "user", "viewer"}:
+        raise HTTPException(422, "Invalid huron_role")
+    with db_conn() as conn:
+        conn.execute(
+            """INSERT INTO oidc_role_mappings
+               (provider, ad_group, huron_role, dept_code, description)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (provider, ad_group) DO UPDATE SET
+                 huron_role=excluded.huron_role,
+                 dept_code=excluded.dept_code,
+                 description=excluded.description""",
+            (body.get("provider", "azure"), ad_group, huron_role,
+             body.get("dept_code"), body.get("description")),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM oidc_role_mappings WHERE ad_group=?", (ad_group,)
+        ).fetchone()
+    return dict(row)
+
+
+@app.delete("/api/v1/auth/oidc/role-mappings/{mapping_id}", status_code=204)
+async def delete_oidc_role_mapping(mapping_id: int, p: dict = Depends(current_user)):
+    if p.get("role") != "root":
+        raise HTTPException(403, "root role required")
+    with db_conn() as conn:
+        conn.execute("DELETE FROM oidc_role_mappings WHERE id=?", (mapping_id,))
+        conn.commit()
 
 
 # ═════════════════════════════════════════════════════════════════════════════

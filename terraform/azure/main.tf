@@ -117,41 +117,40 @@ resource "azurerm_container_app_environment" "main" {
   location                   = azurerm_resource_group.main.location
   resource_group_name        = azurerm_resource_group.main.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
-  infrastructure_subnet_id   = azurerm_subnet.container_apps.id
+  # No VNet integration for dev — eliminates subnet provisioning timing issues.
+  # For prod: add infrastructure_subnet_id = azurerm_subnet.container_apps.id
   tags                       = local.common_tags
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 # ── PostgreSQL Flexible Server ────────────────────────────────────────────────
-
-resource "azurerm_private_dns_zone" "postgres" {
-  name                = "${local.prefix}-postgres.private.postgres.database.azure.com"
-  resource_group_name = azurerm_resource_group.main.name
-  tags                = local.common_tags
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  name                  = "${local.prefix}-postgres-dns-link"
-  private_dns_zone_name = azurerm_private_dns_zone.postgres.name
-  virtual_network_id    = azurerm_virtual_network.main.id
-  resource_group_name   = azurerm_resource_group.main.name
-}
+# Public access for dev so Container Apps (no VNet) can reach the DB.
+# For prod: switch to private + delegated_subnet_id + private DNS zone.
 
 resource "azurerm_postgresql_flexible_server" "main" {
-  name                         = "${local.prefix}-postgres-${local.suffix}"
-  resource_group_name          = azurerm_resource_group.main.name
-  location                     = azurerm_resource_group.main.location
-  version                      = "15"
-  delegated_subnet_id          = azurerm_subnet.database.id
-  private_dns_zone_id          = azurerm_private_dns_zone.postgres.id
-  administrator_login          = var.postgres_admin_user
-  administrator_password       = var.postgres_admin_password
-  sku_name                     = var.postgres_sku
-  storage_mb                   = var.postgres_storage_mb
-  backup_retention_days        = 7
-  geo_redundant_backup_enabled = false
-  tags                         = local.common_tags
+  name                          = "${local.prefix}-postgres-${local.suffix}"
+  resource_group_name           = azurerm_resource_group.main.name
+  location                      = azurerm_resource_group.main.location
+  version                       = "15"
+  public_network_access_enabled = true
+  administrator_login           = var.postgres_admin_user
+  administrator_password        = var.postgres_admin_password
+  sku_name                      = var.postgres_sku
+  storage_mb                    = var.postgres_storage_mb
+  backup_retention_days         = 7
+  geo_redundant_backup_enabled  = false
+  tags                          = local.common_tags
+}
 
-  depends_on = [azurerm_private_dns_zone_virtual_network_link.postgres]
+# Allow Azure services (Container Apps) to reach PostgreSQL
+resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure" {
+  name             = "allow-azure-services"
+  server_id        = azurerm_postgresql_flexible_server.main.id
+  start_ip_address = "0.0.0.0"
+  end_ip_address   = "0.0.0.0"
 }
 
 resource "azurerm_postgresql_flexible_server_database" "huron" {
@@ -170,13 +169,14 @@ resource "azurerm_postgresql_flexible_server_configuration" "ssl" {
 # ── Azure Cache for Redis ─────────────────────────────────────────────────────
 
 resource "azurerm_redis_cache" "main" {
+  count               = var.enable_redis ? 1 : 0
   name                = "${local.prefix}-redis-${local.suffix}"
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
   capacity            = 1
   family              = "C"
   sku_name            = "Standard"
-  enable_non_ssl_port = false
+  non_ssl_port_enabled = false
   minimum_tls_version = "1.2"
   tags                = local.common_tags
 
@@ -236,6 +236,27 @@ resource "azurerm_key_vault_secret" "mcp_encryption_key" {
   key_vault_id = azurerm_key_vault.main.id
 }
 
+resource "azurerm_key_vault_secret" "oidc_client_secret" {
+  count        = var.oidc_client_secret != "" ? 1 : 0
+  name         = "oidc-client-secret"
+  value        = var.oidc_client_secret
+  key_vault_id = azurerm_key_vault.main.id
+}
+
+resource "azurerm_key_vault_secret" "workday_client_secret" {
+  count        = var.workday_client_secret != "" ? 1 : 0
+  name         = "workday-client-secret"
+  value        = var.workday_client_secret
+  key_vault_id = azurerm_key_vault.main.id
+}
+
+resource "azurerm_key_vault_secret" "teams_app_secret" {
+  count        = var.teams_app_secret != "" ? 1 : 0
+  name         = "teams-app-secret"
+  value        = var.teams_app_secret
+  key_vault_id = azurerm_key_vault.main.id
+}
+
 # ── Storage Account (document blobs) ──────────────────────────────────────────
 
 resource "azurerm_storage_account" "main" {
@@ -284,9 +305,13 @@ resource "azurerm_role_assignment" "acr_pull" {
 # ── Backend Container App ─────────────────────────────────────────────────────
 
 locals {
-  backend_image_ref = var.backend_image != "" ? var.backend_image : "${azurerm_container_registry.main.login_server}/huron-backend:latest"
-  database_url      = "postgresql://${var.postgres_admin_user}:${var.postgres_admin_password}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/${var.postgres_db_name}?sslmode=require"
-  redis_url         = "rediss://:${azurerm_redis_cache.main.primary_access_key}@${azurerm_redis_cache.main.hostname}:${azurerm_redis_cache.main.ssl_port}"
+  backend_image_ref  = var.backend_image != "" ? var.backend_image : "${azurerm_container_registry.main.login_server}/huron-backend:latest"
+  frontend_image_ref = var.frontend_image != "" ? var.frontend_image : "${azurerm_container_registry.main.login_server}/huron-frontend:latest"
+  database_url       = "postgresql://${var.postgres_admin_user}:${var.postgres_admin_password}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/${var.postgres_db_name}?sslmode=require"
+  redis_url          = var.enable_redis ? "rediss://:${azurerm_redis_cache.main[0].primary_access_key}@${azurerm_redis_cache.main[0].hostname}:${azurerm_redis_cache.main[0].ssl_port}" : ""
+  # OIDC redirect URI: empty on first apply → fill oidc_redirect_uri_override after getting backend FQDN from outputs
+  oidc_redirect_uri  = var.oidc_redirect_uri_override != "" ? var.oidc_redirect_uri_override : "http://localhost:8004/api/v1/auth/oidc/callback"
+  frontend_url       = var.frontend_url_override != "" ? var.frontend_url_override : "http://localhost:3000"
 }
 
 resource "azurerm_container_app" "backend" {
@@ -373,6 +398,83 @@ resource "azurerm_container_app" "backend" {
         value = "8004"
       }
 
+      # ── Azure AD / OIDC SSO ────────────────────────────────────────────────
+      env {
+        name  = "OIDC_CLIENT_ID"
+        value = var.oidc_client_id
+      }
+      env {
+        name  = "OIDC_CLIENT_SECRET"
+        value = var.oidc_client_secret
+      }
+      env {
+        name  = "OIDC_AUTHORITY"
+        value = var.oidc_authority
+      }
+      env {
+        name  = "OIDC_REDIRECT_URI"
+        value = local.oidc_redirect_uri
+      }
+      env {
+        name  = "FRONTEND_URL"
+        value = local.frontend_url
+      }
+      # Graph API re-uses the OIDC app registration credentials
+      env {
+        name  = "AZURE_TENANT_ID"
+        value = var.oidc_authority != "" ? regex("https://login\\.microsoftonline\\.com/([^/]+)", var.oidc_authority)[0] : ""
+      }
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = var.oidc_client_id
+      }
+      env {
+        name  = "AZURE_CLIENT_SECRET"
+        value = var.oidc_client_secret
+      }
+
+      # ── Workday ───────────────────────────────────────────────────────────
+      env {
+        name  = "WORKDAY_MOCK_MODE"
+        value = tostring(var.workday_mock_mode)
+      }
+      env {
+        name  = "WORKDAY_BASE_URL"
+        value = var.workday_base_url
+      }
+      env {
+        name  = "WORKDAY_TENANT"
+        value = var.workday_tenant
+      }
+      env {
+        name  = "WORKDAY_CLIENT_ID"
+        value = var.workday_client_id
+      }
+      env {
+        name  = "WORKDAY_CLIENT_SECRET"
+        value = var.workday_client_secret
+      }
+
+      # ── SharePoint ────────────────────────────────────────────────────────
+      env {
+        name  = "SHAREPOINT_MOCK_MODE"
+        value = tostring(var.sharepoint_mock_mode)
+      }
+
+      # ── Teams Bot ─────────────────────────────────────────────────────────
+      env {
+        name  = "TEAMS_APP_ID"
+        value = var.teams_app_id
+      }
+      env {
+        name  = "TEAMS_APP_SECRET"
+        value = var.teams_app_secret
+      }
+      env {
+        name  = "HURON_INTERNAL_API"
+        value = "http://localhost:8004"
+      }
+
       liveness_probe {
         path                    = "/health"
         port                    = 8004
@@ -394,15 +496,10 @@ resource "azurerm_container_app" "backend" {
 
   depends_on = [
     azurerm_postgresql_flexible_server_database.huron,
-    azurerm_redis_cache.main,
   ]
 }
 
 # ── Frontend Container App ────────────────────────────────────────────────────
-
-locals {
-  frontend_image_ref = var.frontend_image != "" ? var.frontend_image : "${azurerm_container_registry.main.login_server}/huron-frontend:latest"
-}
 
 resource "azurerm_container_app" "frontend" {
   name                         = "${local.prefix}-frontend"
@@ -443,7 +540,7 @@ resource "azurerm_container_app" "frontend" {
       memory = var.frontend_memory
 
       env {
-        name  = "NEXT_PUBLIC_API_URL"
+        name  = "BACKEND_URL"
         value = "https://${azurerm_container_app.backend.ingress[0].fqdn}"
       }
       env {

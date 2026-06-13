@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import { api } from "../services/api";
 import type { UserRole } from "../services/api";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+function getBackendBase(): string {
+  if (typeof window === "undefined") return "http://localhost:8004";
+  const hostname = window.location.hostname;
+  if (hostname.includes("azurecontainerapps.io")) {
+    return `https://${hostname.replace("huron-dev-frontend", "huron-dev-backend")}`;
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004";
+}
 
 // Re-validate the token every 5 minutes while the app is open.
 const REVALIDATE_INTERVAL_MS = 5 * 60 * 1000;
@@ -109,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const token = localStorage.getItem("auth_token");
       if (!token) { logout(); return; }
       try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/auth/validate`, {
+        const response = await fetch(`${getBackendBase()}/api/v1/auth/validate`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) {
@@ -143,7 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/auth/validate`, {
+        const response = await fetch(`${getBackendBase()}/api/v1/auth/validate`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
@@ -187,7 +194,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Used by SSO flow — receives token from redirect, fetches user profile
   const loginWithToken = async (token: string): Promise<void> => {
     localStorage.setItem("auth_token", token);
-    const response = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+    const response = await fetch(`${getBackendBase()}/api/v1/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) throw new Error("Failed to fetch user profile");

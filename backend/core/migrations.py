@@ -480,20 +480,99 @@ def _migrate_sqlite():
     c.execute("""
         CREATE TABLE IF NOT EXISTS oidc_role_mappings (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            ad_group     TEXT NOT NULL UNIQUE,
-            huron_role   TEXT NOT NULL CHECK(huron_role IN ('root','dept_admin','power_user','user')),
+            provider     TEXT NOT NULL DEFAULT 'azure',
+            ad_group     TEXT NOT NULL,
+            huron_role   TEXT NOT NULL CHECK(huron_role IN ('root','dept_admin','power_user','user','viewer')),
             dept_code    TEXT,
             description  TEXT,
             created_by   TEXT NOT NULL DEFAULT 'system',
-            created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (provider, ad_group)
         )
     """)
-    
+
+    # ── Workday sync log ──────────────────────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS workday_sync_log (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at          TEXT    NOT NULL,
+            finished_at         TEXT,
+            status              TEXT    NOT NULL DEFAULT 'success',
+            records_created     INTEGER NOT NULL DEFAULT 0,
+            records_updated     INTEGER NOT NULL DEFAULT 0,
+            records_deactivated INTEGER NOT NULL DEFAULT 0,
+            error_message       TEXT,
+            triggered_by        TEXT    NOT NULL DEFAULT 'scheduler'
+        )
+    """)
+
+    # ── SharePoint sites registry ─────────────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sharepoint_sites (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            site_name      TEXT    NOT NULL,
+            site_url       TEXT,
+            graph_site_id  TEXT,
+            dept_code      TEXT    NOT NULL,
+            is_active      INTEGER NOT NULL DEFAULT 1,
+            last_synced_at TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (site_name)
+        )
+    """)
+
+    # ── SharePoint sync log ───────────────────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sharepoint_sync_log (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            site_id      TEXT    NOT NULL,
+            site_name    TEXT    NOT NULL,
+            dept_code    TEXT    NOT NULL,
+            started_at   TEXT    NOT NULL,
+            finished_at  TEXT,
+            status       TEXT    NOT NULL DEFAULT 'success',
+            ingested     INTEGER NOT NULL DEFAULT 0,
+            failed       INTEGER NOT NULL DEFAULT 0,
+            error_detail TEXT,
+            triggered_by TEXT    NOT NULL DEFAULT 'scheduler'
+        )
+    """)
+
+    # ── Add new columns to users (safe for existing DBs) ─────────────────────
+    for col_sql in (
+        "ALTER TABLE users ADD COLUMN auth_method  TEXT NOT NULL DEFAULT 'local'",
+        "ALTER TABLE users ADD COLUMN workday_id   TEXT",
+        "ALTER TABLE users ADD COLUMN employee_id  TEXT",
+    ):
+        try:
+            c.execute(col_sql)
+        except Exception:
+            pass  # column already exists
+
     conn.commit()
     conn.close()
-    
+
     _seed_data()
+    _seed_sharepoint_demo_sites()
     logger.info("SQLite migrations completed")
+
+
+def _seed_sharepoint_demo_sites():
+    """Insert demo SharePoint sites if the table is empty."""
+    from .database import DBConn
+    with DBConn() as conn:
+        if conn.execute("SELECT COUNT(*) FROM sharepoint_sites").fetchone()[0] == 0:
+            for name, dept in (
+                ("HR Documents",       "hr"),
+                ("Legal Documents",    "legal"),
+                ("Clinical Documents", "clinical"),
+                ("Finance Documents",  "finance"),
+            ):
+                conn.execute(
+                    "INSERT OR IGNORE INTO sharepoint_sites (site_name, dept_code) VALUES (?, ?)",
+                    (name, dept),
+                )
+            conn.commit()
 
 
 def _seed_data():

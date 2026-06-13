@@ -77,7 +77,7 @@ variable "postgres_db_name" {
 variable "postgres_sku" {
   description = "PostgreSQL Flexible Server SKU"
   type        = string
-  default     = "GP_Standard_D2ds_v4"
+  default     = "B_Standard_B1ms"
 }
 
 variable "postgres_storage_mb" {
@@ -134,4 +134,103 @@ variable "backend_max_replicas" {
   description = "Maximum backend replica count"
   type        = number
   default     = 10
+}
+
+# ── Azure AD / OIDC SSO ───────────────────────────────────────────────────────
+
+variable "oidc_client_id" {
+  description = "Azure AD App Registration client (application) ID"
+  type        = string
+  default     = ""
+}
+
+variable "oidc_client_secret" {
+  description = "Azure AD App Registration client secret value"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "oidc_authority" {
+  description = "OIDC authority URL — https://login.microsoftonline.com/<tenant-id>"
+  type        = string
+  default     = ""
+}
+
+# ── Workday ───────────────────────────────────────────────────────────────────
+
+variable "workday_base_url" {
+  description = "Workday REST API base URL (leave blank to use mock mode)"
+  type        = string
+  default     = ""
+}
+
+variable "workday_tenant" {
+  description = "Workday tenant name"
+  type        = string
+  default     = ""
+}
+
+variable "workday_client_id" {
+  description = "Workday API client ID"
+  type        = string
+  default     = ""
+}
+
+variable "workday_client_secret" {
+  description = "Workday API client secret"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "workday_mock_mode" {
+  description = "Use mock Workday data instead of live API (true during demo/staging)"
+  type        = bool
+  default     = true
+}
+
+# ── SharePoint / Microsoft Graph ──────────────────────────────────────────────
+
+variable "sharepoint_mock_mode" {
+  description = "Use local demo files instead of live SharePoint (true during demo/staging)"
+  type        = bool
+  default     = true
+}
+
+# ── Microsoft Teams Bot ───────────────────────────────────────────────────────
+
+variable "teams_app_id" {
+  description = "Bot Framework / Teams app (client) ID"
+  type        = string
+  default     = ""
+}
+
+variable "teams_app_secret" {
+  description = "Bot Framework / Teams app client secret"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# ── Post-first-apply overrides ────────────────────────────────────────────────
+# Leave blank on first apply. After apply, copy the oidc_redirect_uri and
+# frontend_url outputs into these variables, then apply again.
+
+variable "enable_redis" {
+  description = "Deploy Azure Cache for Redis. Set false for dev (app uses in-memory fallback). Set true for staging/prod."
+  type        = bool
+  default     = false
+}
+
+variable "oidc_redirect_uri_override" {
+  description = "OIDC redirect URI (fill after first apply using the oidc_redirect_uri output)"
+  type        = string
+  default     = ""
+}
+
+variable "frontend_url_override" {
+  description = "Frontend public URL (fill after first apply using the frontend_url output)"
+  type        = string
+  default     = ""
 }

@@ -5,7 +5,10 @@ const nextConfig = {
   // Required for `docker run node server.js` (Dockerfile.production Stage 3)
   output: 'standalone',
 
-  // API rewrites to FastAPI backend — BACKEND_URL overridden in containers
+  // API rewrites to FastAPI backend.
+  // IMPORTANT: Next.js bakes rewrite destinations at build time, NOT runtime.
+  // Pass BACKEND_URL as a Docker build arg (--build-arg BACKEND_URL=...) to
+  // set the correct destination. Falls back to localhost:8004 for local dev.
   async rewrites() {
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:8004';
     return [
