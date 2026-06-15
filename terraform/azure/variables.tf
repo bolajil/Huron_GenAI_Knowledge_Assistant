@@ -213,6 +213,14 @@ variable "teams_app_secret" {
   default     = ""
 }
 
+# ── Demo / Admin ─────────────────────────────────────────────────────────────
+
+variable "huron_admin_email" {
+  description = "Email address to promote to root role on every backend startup (SSO demo admin)"
+  type        = string
+  default     = ""
+}
+
 # ── Post-first-apply overrides ────────────────────────────────────────────────
 # Leave blank on first apply. After apply, copy the oidc_redirect_uri and
 # frontend_url outputs into these variables, then apply again.

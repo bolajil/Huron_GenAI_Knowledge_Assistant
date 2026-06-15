@@ -288,6 +288,24 @@ def _seed_db():
                     "INSERT INTO departments (code,display_name,namespace,classification) VALUES (?,?,?,?)",
                     (code, name, ns, cls),
                 )
+        # ── Demo users (seeded once; survive restarts) ─────────────────────
+        _DEMO_USERS = [
+            # username        full_name              role         dept
+            ("demo_admin",  "Demo Dept Admin",  "dept_admin",  "hr"),
+            ("demo_power",  "Demo Power User",  "power_user",  "finance"),
+            ("demo_user",   "Demo Standard User","user",        "operations"),
+            ("demo_viewer", "Demo Viewer",       "viewer",      "marketing"),
+        ]
+        _demo_ph = bcrypt.hashpw(b"HuronDemo2026!", bcrypt.gensalt()).decode()
+        for uname, full, role, dept in _DEMO_USERS:
+            if not conn.execute("SELECT id FROM users WHERE username=?", (uname,)).fetchone():
+                conn.execute(
+                    "INSERT INTO users (username, email, full_name, password_hash, role, department, is_active) "
+                    "VALUES (?, ?, ?, ?, ?, ?, True)",
+                    (uname, f"{uname}@huron-demo.ai", full, _demo_ph, role, dept),
+                )
+                logger.info("Demo user created — %s / HuronDemo2026! (%s)", uname, role)
+
         # Promote HURON_ADMIN_EMAIL to root on startup (useful for SSO demo accounts)
         _admin_email = os.getenv("HURON_ADMIN_EMAIL", "").strip().lower()
         if _admin_email:

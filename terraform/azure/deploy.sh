@@ -28,7 +28,7 @@ success() { echo -e "\033[32m$*\033[0m"; }
 warn()    { echo -e "\033[33m$*\033[0m"; }
 die()     { echo -e "\033[31mERROR: $*\033[0m" >&2; exit 1; }
 
-tf_output() { terraform output -raw "$1" 2>/dev/null; }
+tf_output() { terraform output -raw "$1" 2>/dev/null | tr -d '\r'; }
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 info "[1/7] Preflight checks..."
@@ -62,7 +62,7 @@ else
 fi
 
 # Validate required secrets
-for VAR in OPENAI_API_KEY PINECONE_API_KEY JWT_SECRET MCP_ENCRYPTION_KEY POSTGRES_PASSWORD OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_TENANT_ID; do
+for VAR in OPENAI_API_KEY PINECONE_API_KEY JWT_SECRET MCP_ENCRYPTION_KEY POSTGRES_PASSWORD OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_TENANT_ID HURON_ADMIN_EMAIL; do
   [[ -n "${!VAR:-}" ]] || die "Missing required secret: $VAR (set it in .secrets.sh)"
 done
 
@@ -100,6 +100,7 @@ enable_redis   = false
 oidc_client_id     = "$OIDC_CLIENT_ID"
 oidc_client_secret = "$OIDC_CLIENT_SECRET"
 oidc_authority     = "https://login.microsoftonline.com/$OIDC_TENANT_ID"
+huron_admin_email  = "$HURON_ADMIN_EMAIL"
 
 workday_mock_mode     = true
 workday_base_url      = ""

@@ -419,6 +419,10 @@ resource "azurerm_container_app" "backend" {
         name  = "FRONTEND_URL"
         value = local.frontend_url
       }
+      env {
+        name  = "HURON_ADMIN_EMAIL"
+        value = var.huron_admin_email
+      }
       # Graph API re-uses the OIDC app registration credentials
       env {
         name  = "AZURE_TENANT_ID"
