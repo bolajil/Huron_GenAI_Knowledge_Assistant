@@ -1916,16 +1916,6 @@ _DEPTH_TOKENS = {3: 350, 5: 600, 10: 900, 15: 1300, 20: 1600}
 async def _llm_direct(messages: list[dict], dept: str, top_k: int = 5) -> dict:
     """Call OpenAI directly — fallback when RAG pipeline or documents are unavailable."""
     api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        return {
-            "status": "error",
-            "response": (
-                "The knowledge base is not available and no AI API key is configured. "
-                "Please ask your administrator to set OPENAI_API_KEY."
-            ),
-            "source": "error",
-            "sources": [],
-        }
 
     dept_label = DEPT_LABELS.get(dept, dept.replace("_", " ").title()) if dept else "General"
     system_msg = (
@@ -1943,34 +1933,84 @@ async def _llm_direct(messages: list[dict], dept: str, top_k: int = 5) -> dict:
         if m.get("role") in ("user", "assistant")
     ]
 
-    try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=api_key)
-        resp = await client.chat.completions.create(
-            model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
-            messages=conv,
-            max_tokens=_DEPTH_TOKENS.get(top_k, 600),
-            temperature=0.7,
-        )
-        answer = resp.choices[0].message.content or ""
-        return {
-            "status": "success",
-            "response": answer,
-            "source": "general_knowledge",
-            "source_label": f"General knowledge — no {dept_label} documents indexed",
-            "sources": [],
-        }
-    except Exception as exc:
-        logger.warning("LLM direct fallback error: %s", exc)
-        return {
-            "status": "error",
-            "response": (
-                "I'm unable to respond right now. The knowledge base is unavailable and "
-                "the AI service returned an error. Please try again later."
-            ),
-            "source": "error",
-            "sources": [],
-        }
+    if api_key:
+        try:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=api_key)
+            resp = await client.chat.completions.create(
+                model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+                messages=conv,
+                max_tokens=_DEPTH_TOKENS.get(top_k, 600),
+                temperature=0.7,
+            )
+            answer = resp.choices[0].message.content or ""
+            return {
+                "status": "success",
+                "response": answer,
+                "source": "general_knowledge",
+                "source_label": f"General knowledge — no {dept_label} documents indexed",
+                "sources": [],
+            }
+        except Exception as exc:
+            logger.warning("OpenAI direct fallback error: %s", exc)
+
+    # ── Mistral fallback (OpenAI-compatible SDK) ──────────────────────────────
+    mistral_key = os.getenv("MISTRAL_API_KEY", "")
+    if mistral_key:
+        try:
+            from openai import AsyncOpenAI as _OAI
+            mc = _OAI(api_key=mistral_key, base_url="https://api.mistral.ai/v1")
+            mr = await mc.chat.completions.create(
+                model=os.getenv("MISTRAL_CHAT_MODEL", "open-mistral-nemo"),
+                messages=conv,
+                max_tokens=_DEPTH_TOKENS.get(top_k, 600),
+                temperature=0.7,
+            )
+            answer = mr.choices[0].message.content or ""
+            logger.info("LLM fallback: responded via Mistral")
+            return {
+                "status": "success",
+                "response": answer,
+                "source": "general_knowledge",
+                "source_label": f"General knowledge — no {dept_label} documents indexed",
+                "sources": [],
+            }
+        except Exception as mistral_exc:
+            logger.warning("Mistral fallback error: %s", mistral_exc)
+
+    # ── DeepSeek fallback (OpenAI-compatible SDK) ─────────────────────────────
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if deepseek_key:
+        try:
+            from openai import AsyncOpenAI as _OAI
+            dc = _OAI(api_key=deepseek_key, base_url="https://api.deepseek.com")
+            dr = await dc.chat.completions.create(
+                model=os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-chat"),
+                messages=conv,
+                max_tokens=_DEPTH_TOKENS.get(top_k, 600),
+                temperature=0.7,
+            )
+            answer = dr.choices[0].message.content or ""
+            logger.info("LLM fallback: responded via DeepSeek")
+            return {
+                "status": "success",
+                "response": answer,
+                "source": "general_knowledge",
+                "source_label": f"General knowledge — no {dept_label} documents indexed",
+                "sources": [],
+            }
+        except Exception as deepseek_exc:
+            logger.warning("DeepSeek fallback error: %s", deepseek_exc)
+
+    return {
+        "status": "error",
+        "response": (
+            "I'm unable to respond right now. The knowledge base is unavailable and "
+            "the AI service returned an error. Please try again later."
+        ),
+        "source": "error",
+        "sources": [],
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2167,46 +2207,61 @@ async def research_endpoint(req: ResearchRequest, p: dict = Depends(current_user
 
     # ── 4. AI synthesis ───────────────────────────────────────────────────────
     if req.use_ai_analysis:
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        if api_key:
+        parts: list[str] = []
+        if internal_results:
+            lines = "\n".join(
+                f"- {r['title']}: {r.get('snippet', '')[:300]}"
+                for r in internal_results[:6]
+            )
+            parts.append(f"INTERNAL SOURCES:\n{lines}")
+        if web_results:
+            lines = "\n".join(
+                f"- {r['title']}: {r.get('snippet', '')[:300]}"
+                for r in web_results[:5]
+            )
+            parts.append(f"WEB SOURCES:\n{lines}")
+        context = "\n\n".join(parts) or "No source documents available."
+        synthesis_prompt = (
+            "You are a research analyst for Huron VaultMind.\n"
+            "Synthesize the following research into a professional briefing.\n\n"
+            f"RESEARCH QUERY: {req.query}\n\n"
+            f"{context}\n\n"
+            "Structure your response with:\n"
+            "**Key Findings** (bullet points)\n"
+            "**Summary** (2–3 paragraphs)\n"
+            "**Recommendations**\n\n"
+            "Cite whether insights come from internal documents or web sources."
+        )
+        synthesis_msgs = [{"role": "user", "content": synthesis_prompt}]
+
+        # Provider cascade: OpenAI → Mistral → DeepSeek
+        _synthesis_providers = [
+            (os.getenv("OPENAI_API_KEY", ""),   None,                                      os.getenv("OPENAI_CHAT_MODEL",   "gpt-4o-mini")),
+            (os.getenv("MISTRAL_API_KEY", ""),  "https://api.mistral.ai/v1",               os.getenv("MISTRAL_CHAT_MODEL",  "open-mistral-nemo")),
+            (os.getenv("DEEPSEEK_API_KEY", ""), "https://api.deepseek.com",                os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-chat")),
+        ]
+        for _key, _base, _mdl in _synthesis_providers:
+            if not _key:
+                continue
             try:
-                from openai import AsyncOpenAI
-                client = AsyncOpenAI(api_key=api_key)
-                parts: list[str] = []
-                if internal_results:
-                    lines = "\n".join(
-                        f"- {r['title']}: {r.get('snippet', '')[:300]}"
-                        for r in internal_results[:6]
-                    )
-                    parts.append(f"INTERNAL SOURCES:\n{lines}")
-                if web_results:
-                    lines = "\n".join(
-                        f"- {r['title']}: {r.get('snippet', '')[:300]}"
-                        for r in web_results[:5]
-                    )
-                    parts.append(f"WEB SOURCES:\n{lines}")
-                context = "\n\n".join(parts) or "No source documents available."
-                prompt = (
-                    "You are a research analyst for Huron VaultMind.\n"
-                    "Synthesize the following research into a professional briefing.\n\n"
-                    f"RESEARCH QUERY: {req.query}\n\n"
-                    f"{context}\n\n"
-                    "Structure your response with:\n"
-                    "**Key Findings** (bullet points)\n"
-                    "**Summary** (2–3 paragraphs)\n"
-                    "**Recommendations**\n\n"
-                    "Cite whether insights come from internal documents or web sources."
-                )
-                resp = await client.chat.completions.create(
-                    model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
-                    messages=[{"role": "user", "content": prompt}],
+                from openai import AsyncOpenAI as _OAI
+                _kw = {"api_key": _key}
+                if _base:
+                    _kw["base_url"] = _base
+                _sc = _OAI(**_kw)
+                _sr = await _sc.chat.completions.create(
+                    model=_mdl,
+                    messages=synthesis_msgs,
                     max_tokens=1200,
                     temperature=0.4,
                 )
-                synthesis = resp.choices[0].message.content or ""
-            except Exception as exc:
-                logger.warning("AI synthesis error: %s", exc)
-                synthesis = "AI synthesis unavailable at this time."
+                synthesis = _sr.choices[0].message.content or ""
+                logger.info("Research synthesis via %s", _base or "openai")
+                break
+            except Exception as _exc:
+                logger.warning("Research synthesis error (%s): %s", _base or "openai", _exc)
+        else:
+            synthesis = "AI synthesis unavailable at this time."
 
     return {
         "status":           "success",

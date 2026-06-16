@@ -55,6 +55,7 @@ export function ChatInterface() {
 
   const messagesEndRef  = useRef<HTMLDivElement>(null);
   const autoRestored    = useRef(false);
+  const sendingRef      = useRef(false);
 
   // ── Load indexes ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -154,7 +155,8 @@ export function ChatInterface() {
 
   // ── Send message ───────────────────────────────────────────────────────────
   const handleSend = async () => {
-    if (!input.trim() || sending) return;
+    if (!input.trim() || sending || sendingRef.current) return;
+    sendingRef.current = true;
     const userText = input.trim();
     setInput("");
 
@@ -232,6 +234,7 @@ export function ChatInterface() {
       ]);
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   };
 

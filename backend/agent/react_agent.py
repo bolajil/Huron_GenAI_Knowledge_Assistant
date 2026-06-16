@@ -15,8 +15,39 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
 from openai import AsyncOpenAI
+import os as _os
 
 from .tools import AgentTools, ToolPermissionError
+
+
+def _build_llm_providers() -> list[tuple[AsyncOpenAI, str]]:
+    """Return ordered list of (client, model) for every key that is set.
+    Callers try each in turn; the first one that doesn't 401 wins."""
+    providers: list[tuple[AsyncOpenAI, str]] = []
+    openai_key = _os.getenv("OPENAI_API_KEY", "")
+    if openai_key:
+        providers.append((
+            AsyncOpenAI(api_key=openai_key),
+            _os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+        ))
+    mistral_key = _os.getenv("MISTRAL_API_KEY", "")
+    if mistral_key:
+        providers.append((
+            AsyncOpenAI(api_key=mistral_key, base_url="https://api.mistral.ai/v1"),
+            _os.getenv("MISTRAL_CHAT_MODEL", "mistral-small-latest"),
+        ))
+    deepseek_key = _os.getenv("DEEPSEEK_API_KEY", "")
+    if deepseek_key:
+        providers.append((
+            AsyncOpenAI(api_key=deepseek_key, base_url="https://api.deepseek.com"),
+            _os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-chat"),
+        ))
+    return providers
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    msg = str(exc)
+    return "401" in msg or "invalid_api_key" in msg or "Unauthorized" in msg
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +73,17 @@ class ReActAgent:
         max_steps: int = 12,
         model: str = "gpt-4o-mini",
     ):
-        self.ctx        = tenant_context
-        self.run_id     = run_id
-        self.max_steps  = max_steps
-        self.model      = model
-        self.client     = AsyncOpenAI(api_key=__import__("os").getenv("OPENAI_API_KEY", ""))
+        self.ctx           = tenant_context
+        self.run_id        = run_id
+        self.max_steps     = max_steps
+        self._providers    = _build_llm_providers()
+        self._provider_idx = 0
+        # Use the first provider's model (overrides UI-selected OpenAI model when not available)
+        if self._providers:
+            self.client, self.model = self._providers[0]
+        else:
+            self.client, self.model = AsyncOpenAI(api_key=""), model
+        logger.info("Agent using provider index 0 / %d, model=%s", len(self._providers), self.model)
         self.tools      = AgentTools(
             tenant_context,
             pinecone_index=__import__("os").getenv("PINECONE_INDEX", "huron-enterprise-knowledge"),
@@ -56,6 +93,29 @@ class ReActAgent:
 
     def stop(self) -> None:
         self._stop_requested = True
+
+    async def _chat(self, messages: list[dict], tools: list | None = None) -> Any:
+        """Call the LLM with automatic fallback to the next provider on auth errors."""
+        last_exc: Exception | None = None
+        for idx, (client, model) in enumerate(self._providers):
+            try:
+                kw: dict = {"model": model, "messages": messages}
+                if tools:
+                    kw["tools"] = tools
+                    kw["tool_choice"] = "auto"
+                result = await client.chat.completions.create(**kw)
+                if idx != self._provider_idx:
+                    logger.info("Agent switched to provider idx=%d model=%s", idx, model)
+                    self._provider_idx = idx
+                    self.client, self.model = client, model
+                return result
+            except Exception as exc:
+                last_exc = exc
+                if _is_auth_error(exc):
+                    logger.warning("Provider idx=%d auth error, trying next", idx)
+                    continue
+                raise
+        raise last_exc  # type: ignore[misc]
 
     # ── Main loop ───────────────────────────────────────────────────────
 
@@ -73,12 +133,7 @@ class ReActAgent:
 
             # ── Call LLM ────────────────────────────────────────────────
             try:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    tools=oai_tools,
-                    tool_choice="auto",
-                )
+                response = await self._chat(messages, oai_tools)
             except Exception as e:
                 err = self._step("error", {"message": str(e)}, step_num)
                 self.steps.append(err)
@@ -184,9 +239,7 @@ class ReActAgent:
             # One final call without tools to force a summary
             messages.append({"role": "user", "content": "Summarize what you found so far."})
             try:
-                final  = await self.client.chat.completions.create(
-                    model=self.model, messages=messages
-                )
+                final  = await self._chat(messages)
                 answer = final.choices[0].message.content or ""
             except Exception:
                 answer = "Unable to generate final answer."
