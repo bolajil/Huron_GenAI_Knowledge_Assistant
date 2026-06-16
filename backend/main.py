@@ -3315,7 +3315,16 @@ async def oidc_callback(
             "last_login=CURRENT_TIMESTAMP WHERE id=?",
             (name, row["id"]),
         )
+        # Promote to root at login time if email matches HURON_ADMIN_EMAIL
+        _admin_email = os.getenv("HURON_ADMIN_EMAIL", "").strip().lower()
+        if _admin_email and email == _admin_email and row["role"] != "root":
+            conn.execute(
+                "UPDATE users SET role='root', department='all' WHERE id=?",
+                (row["id"],),
+            )
+            logger.info("OIDC login: promoted %s to root (HURON_ADMIN_EMAIL match)", email)
         conn.commit()
+        row = conn.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
 
     user  = dict(row)
     token = create_token(user)
