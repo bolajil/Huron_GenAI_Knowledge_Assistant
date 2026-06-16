@@ -40,8 +40,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-# Backend URL is read by the Next.js rewrites at runtime (server side only)
-ENV BACKEND_URL="http://backend:8004"
+# BACKEND_URL must be set via container env var at deploy time (e.g. Azure Container App env)
+ENV BACKEND_URL="http://localhost:8004"
 
 # Standalone output already contains only what's needed
 COPY --from=builder --chown=huron:huron /app/.next/standalone ./
