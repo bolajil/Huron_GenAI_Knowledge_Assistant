@@ -19,6 +19,7 @@ ENV PATH="/app/venv/bin:$PATH"
 # Build context is project root (set in docker-compose), so path is flat
 COPY requirements_production.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements_production.txt
 
 # ─── Stage 2: production image ───────────────────────────────────────────────
