@@ -62,7 +62,7 @@ else
 fi
 
 # Validate required secrets
-for VAR in OPENAI_API_KEY PINECONE_API_KEY JWT_SECRET MCP_ENCRYPTION_KEY POSTGRES_PASSWORD OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_TENANT_ID HURON_ADMIN_EMAIL; do
+for VAR in PINECONE_API_KEY JWT_SECRET MCP_ENCRYPTION_KEY POSTGRES_PASSWORD OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_TENANT_ID HURON_ADMIN_EMAIL MISTRAL_API_KEY; do
   [[ -n "${!VAR:-}" ]] || die "Missing required secret: $VAR (set it in .secrets.sh)"
 done
 
@@ -73,6 +73,8 @@ environment  = "dev"
 project_name = "huron"
 
 openai_api_key   = "$OPENAI_API_KEY"
+mistral_api_key  = "$MISTRAL_API_KEY"
+deepseek_api_key = "${DEEPSEEK_API_KEY:-}"
 pinecone_api_key = "$PINECONE_API_KEY"
 pinecone_index   = "huron-enterprise-knowledge"
 

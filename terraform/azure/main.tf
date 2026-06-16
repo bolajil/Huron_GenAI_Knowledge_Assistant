@@ -362,6 +362,14 @@ resource "azurerm_container_app" "backend" {
         value = var.openai_api_key
       }
       env {
+        name  = "MISTRAL_API_KEY"
+        value = var.mistral_api_key
+      }
+      env {
+        name  = "DEEPSEEK_API_KEY"
+        value = var.deepseek_api_key
+      }
+      env {
         name  = "PINECONE_API_KEY"
         value = var.pinecone_api_key
       }

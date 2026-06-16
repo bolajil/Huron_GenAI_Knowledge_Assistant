@@ -54,13 +54,23 @@ class AgentTools:
         return self._pc_index
 
     def _embed(self, text: str) -> list[float]:
-        """Embed using OpenAI text-embedding-3-small (1536-dim)."""
-        from openai import OpenAI
-        res = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "")).embeddings.create(
-            input=text,
-            model="text-embedding-3-small",
-        )
-        return res.data[0].embedding
+        """Embed text. Tries OpenAI first, falls back to sentence-transformers (384-dim)."""
+        openai_key = os.getenv("OPENAI_API_KEY", "")
+        if openai_key:
+            try:
+                from openai import OpenAI
+                res = OpenAI(api_key=openai_key).embeddings.create(
+                    input=text,
+                    model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                )
+                return res.data[0].embedding
+            except Exception as exc:
+                logger.warning("OpenAI embedding failed, falling back to sentence-transformers: %s", exc)
+        # Local fallback — always available, 384-dim (matches index)
+        from sentence_transformers import SentenceTransformer
+        _model_name = os.getenv("ST_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+        model = SentenceTransformer(_model_name)
+        return model.encode(text, normalize_embeddings=True).tolist()
 
     def _assert_dept_access(self, dept: str) -> None:
         scope = getattr(self.ctx, "namespace_scope", [])
@@ -159,17 +169,33 @@ class AgentTools:
             f"{label_b}:\n{text_b[:1500]}\n\n"
             f'Respond with JSON: {{"agreements":[...],"conflicts":[...],"gaps":[...],"summary":"..."}}'
         )
-        try:
-            res = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "")).chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_tokens=600,
-            )
-            return json.loads(res.choices[0].message.content or "{}")
-        except Exception as e:
-            return {"error": str(e), "agreements": [], "conflicts": [], "gaps": [],
-                    "summary": f"Comparison failed: {e}"}
+        _providers = [
+            (os.getenv("OPENAI_API_KEY", ""),   None,                        "gpt-4o-mini"),
+            (os.getenv("MISTRAL_API_KEY", ""),  "https://api.mistral.ai/v1", os.getenv("MISTRAL_CHAT_MODEL", "mistral-small-latest")),
+            (os.getenv("DEEPSEEK_API_KEY", ""), "https://api.deepseek.com",  os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-chat")),
+        ]
+        for _key, _base, _mdl in _providers:
+            if not _key:
+                continue
+            try:
+                from openai import OpenAI as _OAI
+                _kw: dict = {"api_key": _key}
+                if _base:
+                    _kw["base_url"] = _base
+                res = _OAI(**_kw).chat.completions.create(
+                    model=_mdl,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=600,
+                )
+                text = res.choices[0].message.content or "{}"
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    return {"agreements": [], "conflicts": [], "gaps": [], "summary": text}
+            except Exception as e:
+                logger.warning("compare_results provider %s error: %s", _mdl, e)
+        return {"error": "All LLM providers failed", "agreements": [], "conflicts": [], "gaps": [],
+                "summary": "Comparison unavailable"}
 
     # ── Tool 4: get_document_list ────────────────────────────────────────
 

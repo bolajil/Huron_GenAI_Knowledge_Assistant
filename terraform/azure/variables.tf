@@ -22,6 +22,21 @@ variable "openai_api_key" {
   description = "OpenAI API key"
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "mistral_api_key" {
+  description = "Mistral API key (LLM fallback when OpenAI is unavailable)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "deepseek_api_key" {
+  description = "DeepSeek API key (LLM second fallback)"
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "pinecone_api_key" {
