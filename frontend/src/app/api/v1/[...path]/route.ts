@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Read at request time — works correctly regardless of when the image was built.
+// Read at request time — correct regardless of when the image was built.
 const BACKEND = (process.env.BACKEND_URL || 'http://localhost:8004').replace(/\/$/, '');
+
+// Disable Next.js response caching — every request must reach the backend.
+export const dynamic = 'force-dynamic';
 
 async function proxy(req: NextRequest): Promise<NextResponse> {
   const path = req.nextUrl.pathname;   // /api/v1/...
@@ -17,11 +20,9 @@ async function proxy(req: NextRequest): Promise<NextResponse> {
     method: req.method,
     headers,
     body: isBodyless ? undefined : req.body,
-    // Required for streaming request bodies (file uploads, SSE writes)
     ...(isBodyless ? {} : { duplex: 'half' }),
   } as RequestInit);
 
-  // Stream the response body through unchanged (supports SSE and large payloads)
   return new NextResponse(upstream.body, {
     status: upstream.status,
     headers: upstream.headers,
@@ -34,6 +35,3 @@ export const PUT     = proxy;
 export const PATCH   = proxy;
 export const DELETE  = proxy;
 export const OPTIONS = proxy;
-
-// Disable body size limit so file uploads pass through
-export const config = { api: { bodyParser: false } };
