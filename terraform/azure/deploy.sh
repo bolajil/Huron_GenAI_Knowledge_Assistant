@@ -221,6 +221,18 @@ sed -i \
 
 terraform apply -auto-approve
 
+# ── Wire BACKEND_URL into the frontend container at runtime ───────────────────
+# Next.js standalone reads BACKEND_URL from the process env at server startup.
+# Terraform sets it via the resource block, but az containerapp update calls
+# earlier in the script can wipe env vars. This guarantees it is always correct.
+info "[7b/7] Setting BACKEND_URL on frontend container app..."
+az containerapp update \
+  -n "huron-dev-frontend" \
+  -g "huron-dev-rg" \
+  --set-env-vars "BACKEND_URL=$BACKEND_URL" \
+  --output none
+success "  BACKEND_URL → $BACKEND_URL"
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
